@@ -50,20 +50,26 @@ pub struct PrismaOpt {
     pub host: String,
 
     /// The port the query engine should bind to.
+    // NOTE: this is mutually exclusive with path
     #[structopt(long, short, env, default_value = "4466")]
     pub port: u16,
 
+    /// The unix socket path to listen on
+    // NOTE: this is mutually exclusive with port.
+    #[structopt(long, short, env)]
+    pub unix_path: Option<String>,
+
     /// Path to the Prisma datamodel file
     #[structopt(long, env = "PRISMA_DML_PATH", parse(from_os_str = load_datamodel_file))]
-    datamodel_path: Option<String>,
+    pub datamodel_path: Option<String>,
 
     /// Base64 encoded Prisma datamodel
     #[structopt(long, env = "PRISMA_DML", parse(try_from_str = parse_base64_string))]
-    datamodel: Option<String>,
+    pub datamodel: Option<String>,
 
-    /// Base64 encoded datasources, overwriting the ones in the datamodel
+    /// Base64 encoded datasource urls, overwriting the ones in the schema
     #[structopt(long, env, parse(try_from_str = parse_base64_string))]
-    overwrite_datasources: Option<String>,
+    pub overwrite_datasources: Option<String>,
 
     /// Switches query schema generation to Prisma 1 compatible mode.
     #[structopt(long, short)]
@@ -80,6 +86,10 @@ pub struct PrismaOpt {
     /// Enables server debug features.
     #[structopt(long = "debug", short = "d")]
     pub enable_debug_mode: bool,
+
+    /// Set the log format.
+    #[structopt(long = "log-format", env = "RUST_LOG_FORMAT")]
+    pub log_format: Option<String>,
 
     #[structopt(subcommand)]
     pub subcommand: Option<Subcommand>,
@@ -98,9 +108,8 @@ impl PrismaOpt {
     fn datamodel_str(&self) -> PrismaResult<&str> {
         let res = self
             .datamodel
-            .as_ref()
-            .map(|dm| dm.as_str())
-            .or(self.datamodel_path.as_ref().map(|dm| dm.as_str()))
+            .as_deref()
+            .or(self.datamodel_path.as_deref())
             .ok_or_else(|| {
                 PrismaError::ConfigurationError(
                     "Datamodel should be provided either as path or base64-encoded string.".into(),
@@ -114,47 +123,48 @@ impl PrismaOpt {
         let datamodel_str = self.datamodel_str()?;
 
         let datamodel = if ignore_env_errors {
-            datamodel::parse_datamodel_and_ignore_env_errors(datamodel_str)
+            datamodel::parse_datamodel_and_ignore_datasource_urls(datamodel_str)
         } else {
             datamodel::parse_datamodel(datamodel_str)
         };
 
         match datamodel {
             Err(errors) => Err(PrismaError::ConversionError(errors, datamodel_str.to_string())),
-            _ => Ok(datamodel?),
+            _ => Ok(datamodel.unwrap().subject),
         }
     }
 
     pub fn configuration(&self, ignore_env_errors: bool) -> PrismaResult<Configuration> {
         let datamodel_str = self.datamodel_str()?;
 
-        let config_result = if ignore_env_errors {
-            datamodel::parse_configuration_and_ignore_env_errors(datamodel_str)
+        let datasource_url_overrides: Vec<(String, String)> = if let Some(ref json) = self.overwrite_datasources {
+            let datasource_url_overrides: Vec<SourceOverride> = serde_json::from_str(&json)?;
+            datasource_url_overrides.into_iter().map(|x| (x.name, x.url)).collect()
         } else {
-            datamodel::parse_configuration(datamodel_str)
+            vec![]
         };
 
-        match config_result {
-            Err(errors) => Err(PrismaError::ConversionError(errors, datamodel_str.to_string())),
-            Ok(mut configuration) => {
-                if let Some(ref overwrites) = self.overwrite_datasources {
-                    let datasource_overwrites: Vec<SourceOverride> = serde_json::from_str(&overwrites)?;
+        let config_result = if ignore_env_errors {
+            datamodel::parse_configuration_and_ignore_datasource_urls(datamodel_str)
+        } else {
+            datamodel::parse_configuration_with_url_overrides(datamodel_str, datasource_url_overrides)
+        };
+        config_result
+            .map(|config| config.subject)
+            .map_err(|errors| PrismaError::ConversionError(errors, datamodel_str.to_string()))
+    }
 
-                    for datasource_override in datasource_overwrites {
-                        for datasource in &mut configuration.datasources {
-                            if &datasource_override.name == datasource.name() {
-                                debug!(
-                                    "overwriting datasource {} with url {}",
-                                    &datasource_override.name, &datasource_override.url
-                                );
-                                datasource.set_url(&datasource_override.url);
-                            }
-                        }
-                    }
-                }
-                Ok(configuration)
-            }
+    /// Extract the log format from on the RUST_LOG_FORMAT env var.
+    pub fn log_format(&self) -> crate::LogFormat {
+        match self.log_format.as_deref() {
+            Some("devel") => crate::LogFormat::Text,
+            _ => crate::LogFormat::Json,
         }
+    }
+
+    /// The unix path to listen on.
+    pub(crate) fn unix_path(&self) -> Option<&String> {
+        self.unix_path.as_ref()
     }
 }
 
@@ -173,11 +183,11 @@ fn parse_base64_string(s: &str) -> PrismaResult<String> {
 }
 
 fn load_datamodel_file(path: &OsStr) -> String {
-    let mut f = File::open(path).expect(&format!("Could not open datamodel file {:?}", path));
+    let mut f = File::open(path).unwrap_or_else(|_| panic!("Could not open datamodel file {:?}", path));
     let mut datamodel = String::new();
 
     f.read_to_string(&mut datamodel)
-        .expect(&format!("Could not read datamodel file: {:?}", path));
+        .unwrap_or_else(|_| panic!("Could not read datamodel file: {:?}", path));
 
     datamodel
 }

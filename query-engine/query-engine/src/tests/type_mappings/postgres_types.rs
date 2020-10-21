@@ -7,7 +7,7 @@ use test_macros::test_each_connector;
 
 const CREATE_TYPES_TABLE: &str = indoc! {
     r##"
-    CREATE TABLE "prisma-tests"."types" (
+    CREATE TABLE "types" (
         id SERIAL PRIMARY KEY,
         numeric_int2 int2,
         numeric_int4 int4,
@@ -305,7 +305,7 @@ async fn small_float_values_must_work(api: &TestApi) -> TestResult {
 
 const CREATE_ARRAY_TYPES_TABLE: &str = indoc! {
     r##"
-    CREATE TABLE "prisma-tests"."arraytypes" (
+    CREATE TABLE "arraytypes" (
         id SERIAL PRIMARY KEY,
         numeric_int2 int2[],
         numeric_int4 int4[],
@@ -477,7 +477,7 @@ async fn postgres_array_types_roundtrip(api: &TestApi) -> TestResult {
     Ok(())
 }
 
-#[test_each_connector(tags("postgres"), log = "debug")]
+#[test_each_connector(tags("postgres"))]
 async fn all_postgres_id_types_work(api: &TestApi) -> TestResult {
     let identifier_types = &[
         ("int2", "12"),
@@ -508,12 +508,12 @@ async fn all_postgres_id_types_work(api: &TestApi) -> TestResult {
         ("jsonb", "\"{\\\"isThisPrimaryKeyReallyJSON\\\":true}\""),
     ];
 
-    let drop_table = r#"DROP TABLE IF EXISTS "prisma-tests"."pk_test""#;
+    let drop_table = r#"DROP TABLE IF EXISTS "pk_test""#;
 
     for (identifier_type, identifier_value) in identifier_types {
         for index_type in &["PRIMARY KEY", "UNIQUE"] {
             let create_table = format!(
-                r#"CREATE TABLE "prisma-tests"."pk_test" (id {} NOT NULL, {} (id))"#,
+                r#"CREATE TABLE "pk_test" (id {} NOT NULL, {} (id))"#,
                 identifier_type, index_type,
             );
             api.execute_sql(drop_table).await?;
@@ -559,32 +559,32 @@ async fn all_postgres_types_work_as_filter(api: &TestApi) -> TestResult {
         query {
             findManytypes(
                 where: {
-                    numeric_int2: 12
-                    numeric_int4: 9002
-                    numeric_int8: 100000000
-                    numeric_decimal: 49.3444
-                    numeric_float4: 12.12
-                    numeric_float8: 3.139428
-                    numeric_serial2: 8,
-                    numeric_serial4: 80,
-                    numeric_serial8: 80000,
-                    numeric_money: 3.50
-                    numeric_oid: 2000
-                    string_char: "yeet"
-                    string_varchar: "yeet variable"
-                    string_text: "to yeet or not to yeet"
-                    binary_bits: "0101110"
-                    binary_bits_varying: "0101110"
-                    binary_uuid: "111142ec-880b-4062-913d-8eac479ab957"
-                    time_timestamp: "2020-03-02T08:00:00.000"
-                    time_timestamptz: "2020-03-02T08:00:00.000"
-                    time_date: "2020-03-05T00:00:00.000"
-                    time_time: "2020-03-05T08:00:00.000"
-                    time_timetz: "2020-03-05T08:00:00.000"
-                    boolean_boolean: true
-                    network_inet: "192.168.100.14"
-                    json_json: "{ \"isJson\": true }"
-                    json_jsonb: "{ \"isJSONB\": true }"
+                    numeric_int2: { equals: 12 }
+                    numeric_int4: { equals: 9002 }
+                    numeric_int8: { equals: 100000000 }
+                    numeric_decimal: { equals: 49.3444 }
+                    numeric_float4: { equals: 12.12 }
+                    numeric_float8: { equals: 3.139428 }
+                    numeric_serial2: { equals: 8 }
+                    numeric_serial4: { equals: 80 }
+                    numeric_serial8: { equals: 80000 }
+                    numeric_money: { equals: 3.50 }
+                    numeric_oid: { equals: 2000 }
+                    string_char: { equals: "yeet" }
+                    string_varchar: { equals: "yeet variable" }
+                    string_text: { equals: "to yeet or not to yeet" }
+                    binary_bits: { equals: "0101110" }
+                    binary_bits_varying: { equals: "0101110" }
+                    binary_uuid: { equals: "111142ec-880b-4062-913d-8eac479ab957" }
+                    time_timestamp: { equals: "2020-03-02T08:00:00.000" }
+                    time_timestamptz: { equals: "2020-03-02T08:00:00.000" }
+                    time_date: { equals: "2020-03-05T00:00:00.000" }
+                    time_time: { equals: "2020-03-05T08:00:00.000" }
+                    time_timetz: { equals: "2020-03-05T08:00:00.000" }
+                    boolean_boolean: { equals: true }
+                    network_inet: { equals: "192.168.100.14" }
+                    json_json: { equals: "{ \"isJson\": true }" }
+                    json_jsonb: { equals: "{ \"isJSONB\": true }" }
                 }
             ) {
                 id
@@ -603,7 +603,7 @@ async fn all_postgres_types_work_as_filter(api: &TestApi) -> TestResult {
 
 const CREATE_TYPES_TABLE_WITH_DEFAULTS: &str = indoc! {
     r##"
-    CREATE TABLE "prisma-tests"."types" (
+    CREATE TABLE "types" (
         id SERIAL PRIMARY KEY,
         numeric_int2 int2 NOT NULL DEFAULT 7,
         numeric_int4 int4 NOT NULL DEFAULT 777,
@@ -741,7 +741,7 @@ async fn postgres_db_level_defaults_work(api: &TestApi) -> TestResult {
 
 const CREATE_TYPES_TABLE_WITH_ARRAY_DEFAULTS: &str = indoc! {
     r##"
-    CREATE TABLE "prisma-tests"."arraytypes" (
+    CREATE TABLE "arraytypes" (
         id SERIAL PRIMARY KEY,
         numeric_int2 int2[] NOT NULL DEFAULT '{1, 2, 3}',
         numeric_int4 int4[] NOT NULL DEFAULT '{3, 2, 3}',
@@ -910,7 +910,7 @@ async fn length_mismatch_is_a_known_error(api: &TestApi) -> TestResult {
 async fn serial_columns_can_be_optional(api: &TestApi) -> TestResult {
     let create_table = indoc! {
         r##"
-        CREATE TABLE "prisma-tests"."timestamps" (
+        CREATE TABLE "timestamps" (
             id SERIAL PRIMARY KEY,
             serial serial4 NOT NULL,
             bigserial serial8,

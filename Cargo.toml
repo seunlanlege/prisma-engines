@@ -3,6 +3,7 @@ members = [
   "introspection-engine/core",
   "introspection-engine/connectors/introspection-connector",
   "introspection-engine/connectors/sql-introspection-connector",
+  "introspection-engine/introspection-engine-tests",
   "migration-engine/cli",
   "migration-engine/connectors/migration-connector",
   "migration-engine/connectors/sql-migration-connector",
@@ -15,6 +16,7 @@ members = [
   "prisma-fmt",
   "libs/datamodel/core",
   "libs/datamodel/connectors/datamodel-connector",
+  "libs/datamodel/connectors/sql-datamodel-connector",
   "libs/json-rpc-stdio",
   "libs/prisma-inflector",
   "libs/sql-schema-describer",
@@ -23,4 +25,11 @@ members = [
   "libs/prisma-models",
   "libs/prisma-value",
   "libs/feature-flags",
+  "libs/native-types",
 ]
+
+[patch.crates-io]
+rust_decimal = {git = "https://github.com/pimeys/rust-decimal", branch = "pgbouncer-mode"}
+
+[profile.dev.package.backtrace]
+opt-level = 3

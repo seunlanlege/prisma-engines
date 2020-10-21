@@ -1,8 +1,7 @@
 use crate::sql::TestApi;
-use quaint::prelude::Queryable;
+use quaint::{prelude::Queryable, single::Quaint};
 use sql_migration_connector::MIGRATION_TABLE_NAME;
 use sql_schema_describer::SqlSchema;
-use std::sync::Arc;
 
 pub struct BarrelMigrationExecutor<'a> {
     pub(crate) api: &'a TestApi,
@@ -12,11 +11,16 @@ pub struct BarrelMigrationExecutor<'a> {
 impl BarrelMigrationExecutor<'_> {
     pub async fn execute<F>(self, migration_fn: F) -> anyhow::Result<SqlSchema>
     where
-        F: FnOnce(&mut barrel::Migration) -> (),
+        F: FnOnce(&mut barrel::Migration),
     {
         use barrel::Migration;
 
-        let mut migration = Migration::new().schema(self.api.schema_name());
+        let mut migration = if self.api.is_sqlite() {
+            Migration::new()
+        } else {
+            Migration::new().schema(self.api.schema_name())
+        };
+
         migration_fn(&mut migration);
 
         let full_sql = migration.make_from(self.sql_variant);
@@ -35,8 +39,8 @@ impl BarrelMigrationExecutor<'_> {
     }
 }
 
-async fn run_full_sql(database: &Arc<dyn Queryable + Send + Sync>, full_sql: &str) -> anyhow::Result<()> {
-    for sql in full_sql.split(";").filter(|sql| !sql.is_empty()) {
+async fn run_full_sql(database: &Quaint, full_sql: &str) -> anyhow::Result<()> {
+    for sql in full_sql.split(';').filter(|sql| !sql.is_empty()) {
         database.query_raw(&sql, &[]).await?;
     }
 

@@ -3,8 +3,8 @@ use migration_connector::steps::MigrationExpression;
 
 #[derive(Debug)]
 pub(crate) struct DirectiveDiffer<'a> {
-    pub(crate) previous: &'a ast::Directive,
-    pub(crate) next: &'a ast::Directive,
+    pub(crate) previous: &'a ast::Attribute,
+    pub(crate) next: &'a ast::Attribute,
 }
 
 impl<'a> DirectiveDiffer<'a> {
@@ -41,7 +41,7 @@ impl<'a> DirectiveDiffer<'a> {
     }
 }
 
-pub(crate) fn directives_match(previous: &ast::Directive, next: &ast::Directive) -> bool {
+pub(crate) fn directives_match(previous: &ast::Attribute, next: &ast::Attribute) -> bool {
     previous.name.name == next.name.name
 }
 
@@ -49,7 +49,7 @@ pub fn arguments_match(previous: &ast::Argument, next: &ast::Argument) -> bool {
     previous.name.name == next.name.name
 }
 
-pub(crate) fn directives_are_identical(previous: &ast::Directive, next: &ast::Directive) -> bool {
+pub(crate) fn directives_are_identical(previous: &ast::Attribute, next: &ast::Attribute) -> bool {
     if previous.name.name != next.name.name {
         return false;
     }
@@ -61,8 +61,7 @@ pub(crate) fn directives_are_identical(previous: &ast::Directive, next: &ast::Di
     previous.arguments.iter().all(move |previous_argument| {
         next.arguments
             .iter()
-            .find(|next_argument| arguments_are_identical(previous_argument, next_argument))
-            .is_some()
+            .any(|next_argument| arguments_are_identical(previous_argument, next_argument))
     })
 }
 
@@ -76,7 +75,7 @@ fn arguments_are_identical(previous: &ast::Argument, next: &ast::Argument) -> bo
 mod tests {
     use super::super::{ModelDiffer, TopDiffer};
     use super::*;
-    use datamodel::ast::parser::parse;
+    use datamodel::ast::parser::parse_schema;
 
     fn dog_model_custom_directive_test(test_fn: impl FnOnce(DirectiveDiffer<'_>)) {
         let previous = r#"
@@ -86,7 +85,7 @@ mod tests {
             @@customDirective(hasFur: true, animalType: "Mammal")
         }
         "#;
-        let previous = parse(previous).unwrap();
+        let previous = parse_schema(previous).unwrap();
         let next = r#"
         model Dog {
             id Int @id
@@ -94,7 +93,7 @@ mod tests {
             @@customDirective(animalType: "Mammals", legs: 4)
         }
         "#;
-        let next = parse(next).unwrap();
+        let next = parse_schema(next).unwrap();
 
         let differ = TopDiffer {
             previous: &previous,

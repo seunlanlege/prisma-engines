@@ -2,6 +2,7 @@
 #![allow(unused)]
 
 use barrel::{types, Migration};
+use native_types::{NativeType, PostgresType};
 use pretty_assertions::assert_eq;
 use prisma_value::PrismaValue;
 use quaint::connector::{Queryable, Sqlite as SqliteDatabaseClient};
@@ -30,6 +31,7 @@ fn database_schema_is_serializable() {
                             data_type: "integer".to_string(),
                             full_data_type: "int".to_string(),
                             character_maximum_length: None,
+                            native_type: Some(PostgresType::Integer.to_json()),
 
                             family: ColumnTypeFamily::Int,
                             arity: ColumnArity::Required,
@@ -46,6 +48,7 @@ fn database_schema_is_serializable() {
 
                             family: ColumnTypeFamily::String,
                             arity: ColumnArity::Nullable,
+                            native_type: Some(PostgresType::VarChar(255).to_json()),
                         },
                         default: Some(DefaultValue::VALUE(PrismaValue::String("default value".to_string()))),
                         auto_increment: false,
@@ -59,6 +62,7 @@ fn database_schema_is_serializable() {
 
                             family: ColumnTypeFamily::Int,
                             arity: ColumnArity::Required,
+                            native_type: Some(PostgresType::Integer.to_json()),
                         },
                         default: None,
                         auto_increment: false,
@@ -72,12 +76,14 @@ fn database_schema_is_serializable() {
                 primary_key: Some(PrimaryKey {
                     columns: vec!["column1".to_string()],
                     sequence: None,
+                    constraint_name: None,
                 }),
                 foreign_keys: vec![ForeignKey {
                     constraint_name: None,
                     columns: vec!["column3".to_string()],
                     referenced_table: "table2".to_string(),
                     referenced_columns: vec!["id".to_string()],
+                    on_update_action: ForeignKeyAction::NoAction,
                     on_delete_action: ForeignKeyAction::NoAction,
                 }],
             },
@@ -92,6 +98,7 @@ fn database_schema_is_serializable() {
 
                         family: ColumnTypeFamily::Int,
                         arity: ColumnArity::Required,
+                        native_type: Some(PostgresType::Integer.to_json()),
                     },
                     default: None,
                     auto_increment: true,
@@ -100,6 +107,7 @@ fn database_schema_is_serializable() {
                 primary_key: Some(PrimaryKey {
                     columns: vec!["id".to_string()],
                     sequence: None,
+                    constraint_name: None,
                 }),
                 foreign_keys: vec![],
             },
@@ -140,6 +148,7 @@ fn database_schema_without_primary_key_is_serializable() {
 
                     family: ColumnTypeFamily::Int,
                     arity: ColumnArity::Nullable,
+                    native_type: Some(PostgresType::Integer.to_json()),
                 },
                 default: None,
                 auto_increment: false,
@@ -175,10 +184,6 @@ fn database_schema_is_serializable_for_every_column_type_family() {
         ColumnTypeFamily::Binary,
         ColumnTypeFamily::Json,
         ColumnTypeFamily::Uuid,
-        ColumnTypeFamily::Geometric,
-        ColumnTypeFamily::LogSequenceNumber,
-        ColumnTypeFamily::TextSearch,
-        ColumnTypeFamily::TransactionId,
     ]
     .iter()
     .enumerate()
@@ -188,9 +193,9 @@ fn database_schema_is_serializable_for_every_column_type_family() {
             data_type: "raw type".to_string(),
             full_data_type: "full raw type".to_string(),
             character_maximum_length: None,
-
             family: family.to_owned(),
             arity: ColumnArity::Nullable,
+            native_type: None,
         },
         default: None,
         auto_increment: false,
@@ -234,6 +239,7 @@ fn database_schema_is_serializable_for_every_column_arity() {
 
                 family: ColumnTypeFamily::Int,
                 arity: arity.to_owned(),
+                native_type: Some(PostgresType::Integer.to_json()),
             },
             default: None,
             auto_increment: false,
@@ -278,6 +284,7 @@ fn database_schema_is_serializable_for_every_foreign_key_action() {
 
                         family: ColumnTypeFamily::Int,
                         arity: ColumnArity::Nullable,
+                        native_type: Some(PostgresType::Integer.to_json()),
                     },
                     auto_increment: false,
                     default: None,
@@ -291,6 +298,7 @@ fn database_schema_is_serializable_for_every_foreign_key_action() {
 
                         family: ColumnTypeFamily::Int,
                         arity: ColumnArity::Nullable,
+                        native_type: Some(PostgresType::Integer.to_json()),
                     },
                     auto_increment: false,
                     default: None,
@@ -304,6 +312,7 @@ fn database_schema_is_serializable_for_every_foreign_key_action() {
 
                         family: ColumnTypeFamily::Int,
                         arity: ColumnArity::Nullable,
+                        native_type: Some(PostgresType::Integer.to_json()),
                     },
                     auto_increment: false,
                     default: None,
@@ -317,6 +326,7 @@ fn database_schema_is_serializable_for_every_foreign_key_action() {
 
                         family: ColumnTypeFamily::Int,
                         arity: ColumnArity::Nullable,
+                        native_type: Some(PostgresType::Integer.to_json()),
                     },
                     auto_increment: false,
                     default: None,
@@ -330,6 +340,7 @@ fn database_schema_is_serializable_for_every_foreign_key_action() {
 
                         family: ColumnTypeFamily::Int,
                         arity: ColumnArity::Nullable,
+                        native_type: Some(PostgresType::Integer.to_json()),
                     },
                     auto_increment: false,
                     default: None,
@@ -343,6 +354,7 @@ fn database_schema_is_serializable_for_every_foreign_key_action() {
                     columns: vec!["column1".to_string()],
                     referenced_table: "table2".to_string(),
                     referenced_columns: vec!["id".to_string()],
+                    on_update_action: ForeignKeyAction::NoAction,
                     on_delete_action: ForeignKeyAction::NoAction,
                 },
                 ForeignKey {
@@ -350,6 +362,7 @@ fn database_schema_is_serializable_for_every_foreign_key_action() {
                     columns: vec!["column2".to_string()],
                     referenced_table: "table2".to_string(),
                     referenced_columns: vec!["id".to_string()],
+                    on_update_action: ForeignKeyAction::NoAction,
                     on_delete_action: ForeignKeyAction::Restrict,
                 },
                 ForeignKey {
@@ -357,6 +370,7 @@ fn database_schema_is_serializable_for_every_foreign_key_action() {
                     columns: vec!["column3".to_string()],
                     referenced_table: "table2".to_string(),
                     referenced_columns: vec!["id".to_string()],
+                    on_update_action: ForeignKeyAction::NoAction,
                     on_delete_action: ForeignKeyAction::Cascade,
                 },
                 ForeignKey {
@@ -364,6 +378,7 @@ fn database_schema_is_serializable_for_every_foreign_key_action() {
                     columns: vec!["column4".to_string()],
                     referenced_table: "table2".to_string(),
                     referenced_columns: vec!["id".to_string()],
+                    on_update_action: ForeignKeyAction::NoAction,
                     on_delete_action: ForeignKeyAction::SetNull,
                 },
                 ForeignKey {
@@ -371,6 +386,7 @@ fn database_schema_is_serializable_for_every_foreign_key_action() {
                     columns: vec!["column5".to_string()],
                     referenced_table: "table2".to_string(),
                     referenced_columns: vec!["id".to_string()],
+                    on_update_action: ForeignKeyAction::NoAction,
                     on_delete_action: ForeignKeyAction::SetDefault,
                 },
             ],

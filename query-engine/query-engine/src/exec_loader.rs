@@ -2,8 +2,8 @@ use crate::{PrismaError, PrismaResult};
 use connector::Connector;
 
 use datamodel::{
-    configuration::{MYSQL_SOURCE_NAME, POSTGRES_SOURCE_NAME, SQLITE_SOURCE_NAME},
-    Source,
+    common::provider_names::{MSSQL_SOURCE_NAME, MYSQL_SOURCE_NAME, POSTGRES_SOURCE_NAME, SQLITE_SOURCE_NAME},
+    Datasource,
 };
 use query_core::executor::{InterpretingExecutor, QueryExecutor};
 use std::{collections::HashMap, path::PathBuf};
@@ -12,13 +12,8 @@ use url::Url;
 #[cfg(feature = "sql")]
 use sql_connector::*;
 
-#[cfg(all(feature = "sql", feature = "mssql"))]
-use datamodel::configuration::MSSQL_SOURCE_NAME;
-
-pub async fn load(
-    source: &(dyn Source + Send + Sync),
-) -> PrismaResult<(String, Box<dyn QueryExecutor + Send + Sync + 'static>)> {
-    match source.connector_type() {
+pub async fn load(source: &Datasource) -> PrismaResult<(String, Box<dyn QueryExecutor + Send + Sync + 'static>)> {
+    match source.active_provider.as_str() {
         #[cfg(feature = "sql")]
         SQLITE_SOURCE_NAME => sqlite(source).await,
 
@@ -28,8 +23,18 @@ pub async fn load(
         #[cfg(feature = "sql")]
         POSTGRES_SOURCE_NAME => postgres(source).await,
 
-        #[cfg(all(feature = "sql", feature = "mssql"))]
-        MSSQL_SOURCE_NAME => mssql(source).await,
+        #[cfg(feature = "sql")]
+        MSSQL_SOURCE_NAME => {
+            if !feature_flags::get().microsoftSqlServer {
+                let error = query_core::CoreError::UnsupportedFeatureError(
+                    "Microsoft SQL Server (experimental feature, needs to be enabled)".into(),
+                );
+
+                return Err(PrismaError::CoreError(error));
+            }
+
+            mssql(source).await
+        }
 
         x => Err(PrismaError::ConfigurationError(format!(
             "Unsupported connector type: {}",
@@ -39,9 +44,7 @@ pub async fn load(
 }
 
 #[cfg(feature = "sql")]
-async fn sqlite(
-    source: &(dyn Source + Send + Sync),
-) -> PrismaResult<(String, Box<dyn QueryExecutor + Send + Sync + 'static>)> {
+async fn sqlite(source: &Datasource) -> PrismaResult<(String, Box<dyn QueryExecutor + Send + Sync + 'static>)> {
     trace!("Loading SQLite connector...");
 
     let sqlite = Sqlite::from_source(source).await?;
@@ -49,13 +52,11 @@ async fn sqlite(
     let db_name = path.file_stem().unwrap().to_str().unwrap().to_owned(); // Safe due to previous validations.
 
     trace!("Loaded SQLite connector.");
-    Ok((db_name, sql_executor("sqlite", sqlite, false)))
+    Ok((db_name, sql_executor(sqlite, false)))
 }
 
 #[cfg(feature = "sql")]
-async fn postgres(
-    source: &(dyn Source + Send + Sync),
-) -> PrismaResult<(String, Box<dyn QueryExecutor + Send + Sync + 'static>)> {
+async fn postgres(source: &Datasource) -> PrismaResult<(String, Box<dyn QueryExecutor + Send + Sync + 'static>)> {
     trace!("Loading Postgres connector...");
 
     let url = Url::parse(&source.url().value)?;
@@ -74,13 +75,11 @@ async fn postgres(
         .unwrap_or(false);
 
     trace!("Loaded Postgres connector.");
-    Ok((db_name, sql_executor("postgres", psql, force_transactions)))
+    Ok((db_name, sql_executor(psql, force_transactions)))
 }
 
 #[cfg(feature = "sql")]
-async fn mysql(
-    source: &(dyn Source + Send + Sync),
-) -> PrismaResult<(String, Box<dyn QueryExecutor + Send + Sync + 'static>)> {
+async fn mysql(source: &Datasource) -> PrismaResult<(String, Box<dyn QueryExecutor + Send + Sync + 'static>)> {
     trace!("Loading MySQL connector...");
 
     let mysql = Mysql::from_source(source).await?;
@@ -94,23 +93,21 @@ async fn mysql(
     let db_name = db_name.next().expect(err_str).to_owned();
 
     trace!("Loaded MySQL connector.");
-    Ok((db_name, sql_executor("mysql", mysql, false)))
+    Ok((db_name, sql_executor(mysql, false)))
 }
 
-#[cfg(all(feature = "sql", feature = "mssql"))]
-async fn mssql(
-    source: &(dyn Source + Send + Sync),
-) -> PrismaResult<(String, Box<dyn QueryExecutor + Send + Sync + 'static>)> {
+#[cfg(feature = "sql")]
+async fn mssql(source: &Datasource) -> PrismaResult<(String, Box<dyn QueryExecutor + Send + Sync + 'static>)> {
     trace!("Loading SQL Server connector...");
 
     let mssql = Mssql::from_source(source).await?;
 
-    let mut splitted = source.url().value.split(";");
+    let mut splitted = source.url().value.split(';');
     splitted.next();
 
     let mut params: HashMap<String, String> = splitted
         .map(|kv| {
-            let mut splitted = kv.split("=");
+            let mut splitted = kv.split('=');
             let key = splitted.next().unwrap();
             let value = splitted.next().unwrap();
 
@@ -118,24 +115,16 @@ async fn mssql(
         })
         .collect();
 
-    let db_name = params.remove("database").unwrap_or_else(|| String::from("master"));
+    let db_name = params.remove("schema").unwrap_or_else(|| String::from("dbo"));
 
     trace!("Loaded SQL Server connector.");
-    Ok((db_name, sql_executor("mssql", mssql, false)))
+    Ok((db_name, sql_executor(mssql, false)))
 }
 
 #[cfg(feature = "sql")]
-fn sql_executor<T>(
-    primary_connector: &'static str,
-    connector: T,
-    force_transactions: bool,
-) -> Box<dyn QueryExecutor + Send + Sync + 'static>
+fn sql_executor<T>(connector: T, force_transactions: bool) -> Box<dyn QueryExecutor + Send + Sync + 'static>
 where
     T: Connector + Send + Sync + 'static,
 {
-    Box::new(InterpretingExecutor::new(
-        connector,
-        primary_connector,
-        force_transactions,
-    ))
+    Box::new(InterpretingExecutor::new(connector, force_transactions))
 }

@@ -1,3 +1,4 @@
+use crate::common::parse;
 use indoc::indoc;
 use pretty_assertions::assert_eq;
 
@@ -11,9 +12,9 @@ fn strings_with_quotes_are_unescaped() {
         }"#
     );
 
-    let mut dml = datamodel::parse_datamodel(input).unwrap();
+    let mut dml = parse(input);
     let cat = dml.models_mut().find(|m| m.name == "Category").unwrap();
-    let name = cat.fields.iter_mut().find(|f| f.name == "name").unwrap();
+    let name = cat.scalar_fields().find(|f| f.name == "name").unwrap();
 
     assert_eq!(
         name.default_value
@@ -37,9 +38,9 @@ fn strings_with_newlines_are_unescpaed() {
         }"#
     );
 
-    let mut dml = datamodel::parse_datamodel(input).unwrap();
+    let mut dml = parse(input);
     let cat = dml.models_mut().find(|m| m.name == "Category").unwrap();
-    let name = cat.fields.iter_mut().find(|f| f.name == "name").unwrap();
+    let name = cat.scalar_fields().find(|f| f.name == "name").unwrap();
 
     assert_eq!(
         name.default_value

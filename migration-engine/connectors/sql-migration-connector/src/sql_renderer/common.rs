@@ -1,12 +1,15 @@
-use crate::sql_schema_helpers::*;
+use sql_schema_describer::walkers::*;
 use sql_schema_describer::*;
 use std::fmt::{Display, Write as _};
+
+pub(super) const SQL_INDENTATION: &str = "    ";
 
 #[derive(Debug)]
 pub(crate) enum Quoted<T> {
     Double(T),
     Single(T),
     Backticks(T),
+    SquareBrackets(T),
 }
 
 impl<T> Quoted<T> {
@@ -15,6 +18,7 @@ impl<T> Quoted<T> {
             Quoted::Double(_) => Quoted::Double(u),
             Quoted::Single(_) => Quoted::Single(u),
             Quoted::Backticks(_) => Quoted::Backticks(u),
+            Quoted::SquareBrackets(_) => Quoted::SquareBrackets(u),
         }
     }
 
@@ -37,6 +41,10 @@ impl<T> Quoted<T> {
     pub(crate) fn sqlite_ident(name: T) -> Quoted<T> {
         Quoted::Double(name)
     }
+
+    pub(crate) fn mssql_ident(name: T) -> Quoted<T> {
+        Quoted::SquareBrackets(name)
+    }
 }
 
 impl<T> Display for Quoted<T>
@@ -48,6 +56,7 @@ where
             Quoted::Double(inner) => write!(f, "\"{}\"", inner),
             Quoted::Single(inner) => write!(f, "'{}'", inner),
             Quoted::Backticks(inner) => write!(f, "`{}`", inner),
+            Quoted::SquareBrackets(inner) => write!(f, "[{}]", inner),
         }
     }
 }
@@ -69,9 +78,9 @@ where
     }
 }
 
-pub(crate) fn render_nullability(column: &ColumnRef<'_>) -> &'static str {
-    if column.is_required() {
-        "NOT NULL"
+pub(crate) fn render_nullability(column: &ColumnWalker<'_>) -> &'static str {
+    if column.arity().is_required() {
+        " NOT NULL"
     } else {
         ""
     }
@@ -84,6 +93,16 @@ pub(crate) fn render_on_delete(on_delete: &ForeignKeyAction) -> &'static str {
         ForeignKeyAction::Cascade => "ON DELETE CASCADE",
         ForeignKeyAction::SetDefault => "ON DELETE SET DEFAULT",
         ForeignKeyAction::Restrict => "ON DELETE RESTRICT",
+    }
+}
+
+pub(crate) fn render_on_update(on_update: &ForeignKeyAction) -> &'static str {
+    match on_update {
+        ForeignKeyAction::NoAction => "",
+        ForeignKeyAction::SetNull => "ON UPDATE SET NULL",
+        ForeignKeyAction::Cascade => "ON UPDATE CASCADE",
+        ForeignKeyAction::SetDefault => "ON UPDATE SET DEFAULT",
+        ForeignKeyAction::Restrict => "ON UPDATE RESTRICT",
     }
 }
 

@@ -2,9 +2,10 @@ use crate::{error::PrismaError, PrismaResult};
 use graphql_parser::query::{
     Definition, Document, OperationDefinition, Selection as GqlSelection, SelectionSet, Value,
 };
+use indexmap::IndexMap;
 use query_core::query_document::*;
 use rust_decimal::Decimal;
-use std::{collections::BTreeMap, str::FromStr};
+use std::str::FromStr;
 
 /// Protocol adapter for GraphQL -> Query Document.
 ///
@@ -23,7 +24,7 @@ use std::{collections::BTreeMap, str::FromStr};
 pub struct GraphQLProtocolAdapter;
 
 impl GraphQLProtocolAdapter {
-    pub fn convert(gql_doc: Document, operation: Option<String>) -> PrismaResult<Operation> {
+    pub fn convert(gql_doc: Document<String>, operation: Option<String>) -> PrismaResult<Operation> {
         let mut operations: Vec<Operation> = match operation {
             Some(ref op) => gql_doc
                 .definitions
@@ -50,7 +51,7 @@ impl GraphQLProtocolAdapter {
         Ok(operation)
     }
 
-    fn convert_definition(def: Definition) -> PrismaResult<Vec<Operation>> {
+    fn convert_definition(def: Definition<String>) -> PrismaResult<Vec<Operation>> {
         match def {
             Definition::Fragment(f) => Err(PrismaError::UnsupportedFeatureError(
                 "Fragment definition",
@@ -68,21 +69,15 @@ impl GraphQLProtocolAdapter {
         }
     }
 
-    fn convert_query(selection_set: SelectionSet) -> PrismaResult<Vec<Operation>> {
-        Self::convert_selection_set(selection_set)
-            .map(|fields| fields.into_iter().map(|field| Operation::Read(field)).collect())
+    fn convert_query(selection_set: SelectionSet<String>) -> PrismaResult<Vec<Operation>> {
+        Self::convert_selection_set(selection_set).map(|fields| fields.into_iter().map(Operation::Read).collect())
     }
 
-    fn convert_mutation(selection_set: SelectionSet) -> PrismaResult<Vec<Operation>> {
-        Self::convert_selection_set(selection_set).map(|fields| {
-            fields
-                .into_iter()
-                .map(|selection| Operation::Write(selection))
-                .collect()
-        })
+    fn convert_mutation(selection_set: SelectionSet<String>) -> PrismaResult<Vec<Operation>> {
+        Self::convert_selection_set(selection_set).map(|fields| fields.into_iter().map(Operation::Write).collect())
     }
 
-    fn convert_selection_set(selection_set: SelectionSet) -> PrismaResult<Vec<Selection>> {
+    fn convert_selection_set(selection_set: SelectionSet<String>) -> PrismaResult<Vec<Selection>> {
         selection_set
             .items
             .into_iter()
@@ -119,7 +114,7 @@ impl GraphQLProtocolAdapter {
     }
 
     /// Checks if the given GraphQL definition matches the operation name that should be executed.
-    fn matches_operation(def: &Definition, operation: &str) -> bool {
+    fn matches_operation(def: &Definition<String>, operation: &str) -> bool {
         let check = |n: Option<&String>| n.filter(|name| name.as_str() == operation).is_some();
         match def {
             Definition::Fragment(_) => false,
@@ -132,7 +127,7 @@ impl GraphQLProtocolAdapter {
         }
     }
 
-    fn convert_value(value: Value) -> PrismaResult<QueryValue> {
+    fn convert_value(value: Value<String>) -> PrismaResult<QueryValue> {
         match value {
             Value::Variable(name) => Err(PrismaError::UnsupportedFeatureError(
                 "Variable usage",
@@ -170,7 +165,7 @@ impl GraphQLProtocolAdapter {
                 let values = map
                     .into_iter()
                     .map(|(k, v)| Self::convert_value(v).map(|v| (k, v)))
-                    .collect::<PrismaResult<BTreeMap<String, QueryValue>>>()?;
+                    .collect::<PrismaResult<IndexMap<String, QueryValue>>>()?;
 
                 Ok(QueryValue::Object(values))
             }

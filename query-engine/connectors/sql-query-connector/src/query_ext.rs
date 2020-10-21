@@ -39,10 +39,10 @@ pub trait QueryExt: Queryable + Send + Sync {
         q: String,
         params: Vec<PrismaValue>,
     ) -> std::result::Result<Value, crate::error::RawError> {
-        let params: Vec<_> = params.into_iter().map(quaint::ast::Value::from).collect();
+        let params: Vec<_> = params.into_iter().map(convert_lossy).collect();
         let result_set = AssertUnwindSafe(self.query_raw(&q, &params)).catch_unwind().await??;
 
-        let columns: Vec<String> = result_set.columns().into_iter().map(ToString::to_string).collect();
+        let columns: Vec<String> = result_set.columns().iter().map(ToString::to_string).collect();
         let mut result = Vec::new();
 
         for row in result_set.into_iter() {
@@ -66,7 +66,7 @@ pub trait QueryExt: Queryable + Send + Sync {
         q: String,
         params: Vec<PrismaValue>,
     ) -> std::result::Result<usize, crate::error::RawError> {
-        let params: Vec<_> = params.into_iter().map(quaint::ast::Value::from).collect();
+        let params: Vec<_> = params.into_iter().map(convert_lossy).collect();
         let changes = AssertUnwindSafe(self.execute_raw(&q, &params)).catch_unwind().await??;
 
         Ok(changes as usize)

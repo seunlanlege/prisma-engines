@@ -33,10 +33,10 @@ class NestedUpdateManyMutationInsideUpdateSpec extends FlatSpec with Matchers wi
          |  updateParent(
          |  where: $parent1Id
          |  data:{
-         |    p: "p2"
+         |    p: { set: "p2" }
          |    childOpt: {updateMany: {
          |        where:{c: "c"}
-         |        data: {c: "newC"}
+         |        data: {c: { set: "newC" }}
          |
          |    }}
          |  }){
@@ -49,7 +49,8 @@ class NestedUpdateManyMutationInsideUpdateSpec extends FlatSpec with Matchers wi
       """,
         project,
         errorCode = 2009,
-        errorContains = """Field does not exist on enclosing type.` at `.Mutation.updateParent.data.ParentUpdateInput.childOpt.ChildUpdateOneWithoutParentOptInput.updateMany"""
+        errorContains =
+          """`Field does not exist on enclosing type.` at `Mutation.updateParent.data.ParentUpdateInput.childOpt.ChildUpdateOneWithoutParentOptInput.updateMany`"""
       )
     }
   }
@@ -70,8 +71,8 @@ class NestedUpdateManyMutationInsideUpdateSpec extends FlatSpec with Matchers wi
          |    where: $parent1Id
          |    data:{
          |    childrenOpt: {updateMany: {
-         |        where: {c_contains:"c"}
-         |        data: {non_unique: "updated"}
+         |        where: { c: { contains:"c"} }
+         |        data: { non_unique: { set: "updated" }}
          |    }}
          |  }){
          |    childrenOpt {
@@ -105,8 +106,8 @@ class NestedUpdateManyMutationInsideUpdateSpec extends FlatSpec with Matchers wi
          |    where: $parent1Id
          |    data:{
          |    childrenOpt: {updateMany: {
-         |        where: {c_contains:"c"}
-         |        data: {non_unique: "updated"}
+         |        where: { c: { contains:"c" } }
+         |        data: { non_unique: { set: "updated" }}
          |    }}
          |  }){
          |    childrenOpt {
@@ -140,8 +141,8 @@ class NestedUpdateManyMutationInsideUpdateSpec extends FlatSpec with Matchers wi
          |    where: $parent1Id
          |    data:{
          |    childrenOpt: {updateMany: {
-         |        where: {c_contains:"c"}
-         |        data: {non_unique: "updated"}
+         |        where: {c: { contains:"c" } }
+         |        data: {non_unique: { set: "updated" }}
          |    }}
          |  }){
          |    childrenOpt {
@@ -176,12 +177,12 @@ class NestedUpdateManyMutationInsideUpdateSpec extends FlatSpec with Matchers wi
          |    data:{
          |    childrenOpt: {updateMany: [
          |    {
-         |        where: {c_contains:"1"}
-         |        data: {non_unique: "updated1"}
+         |        where: {c: { contains:"1" } }
+         |        data: {non_unique: { set: "updated1" }}
          |    },
          |    {
-         |        where: {c_contains:"2"}
-         |        data: {non_unique: "updated2"}
+         |        where: {c: { contains:"2" } }
+         |        data: {non_unique: { set: "updated2" }}
          |    }
          |    ]}
          |  }){
@@ -218,7 +219,7 @@ class NestedUpdateManyMutationInsideUpdateSpec extends FlatSpec with Matchers wi
          |    childrenOpt: {updateMany: [
          |    {
          |        where: {}
-         |        data: {non_unique: "updated1"}
+         |        data: { non_unique: { set: "updated1" }}
          |    }
          |    ]}
          |  }){
@@ -254,12 +255,12 @@ class NestedUpdateManyMutationInsideUpdateSpec extends FlatSpec with Matchers wi
          |    data:{
          |    childrenOpt: {updateMany: [
          |    {
-         |        where: {c_contains:"3"}
-         |        data: {non_unique: "updated3"}
+         |        where: { c: { contains:"3" }}
+         |        data: { non_unique: { set: "updated3" }}
          |    },
          |    {
-         |        where: {c_contains:"4"}
-         |        data: {non_unique: "updated4"}
+         |        where: { c: { contains:"4" }}
+         |        data: { non_unique: { set: "updated4" }}
          |    }
          |    ]}
          |  }){
@@ -297,16 +298,16 @@ class NestedUpdateManyMutationInsideUpdateSpec extends FlatSpec with Matchers wi
          |    data:{
          |    childrenOpt: {updateMany: [
          |    {
-         |        where: {c_contains:"c"}
-         |        data: {non_unique: "updated1"}
+         |        where: { c: { contains: "c" }}
+         |        data: { non_unique: { set: "updated1" }}
          |    },
          |    {
-         |        where: {c_contains:"c1"}
-         |        data: {non_unique: "updated2"}
+         |        where: { c: { contains: "c1" }}
+         |        data: { non_unique: { set: "updated2" }}
          |    }
          |    ]}
          |  }){
-         |    childrenOpt (orderBy: c_ASC){
+         |    childrenOpt (orderBy: { c: asc }){
          |      c
          |      non_unique
          |    }
@@ -316,7 +317,7 @@ class NestedUpdateManyMutationInsideUpdateSpec extends FlatSpec with Matchers wi
         project
       )
 
-      server.query("query{parents{p,childrenOpt(orderBy: c_ASC){c, non_unique}}}", project).toString() should be(
+      server.query("query{parents{p,childrenOpt(orderBy: { c: asc }){c, non_unique}}}", project).toString() should be(
         """{"data":{"parents":[{"p":"p1","childrenOpt":[{"c":"c1","non_unique":"updated2"},{"c":"c2","non_unique":"updated1"}]},{"p":"p2","childrenOpt":[{"c":"c3","non_unique":null},{"c":"c4","non_unique":null}]}]}}""")
     }
   }
@@ -327,7 +328,7 @@ class NestedUpdateManyMutationInsideUpdateSpec extends FlatSpec with Matchers wi
         |  createParent(data: {
         |    p: "p1", p_1: "p", p_2: "1"
         |    childrenOpt: {
-        |      create: [{c: "c1"},{c: "c2"}]
+        |      create: [{c: "c1", c_1: "foo", c_2: "bar"},{c: "c2", c_1: "fo", c_2: "lo"}]
         |    }
         |  }){
         |    ${t.parent.selection}
@@ -345,7 +346,7 @@ class NestedUpdateManyMutationInsideUpdateSpec extends FlatSpec with Matchers wi
         |  createParent(data: {
         |    p: "p2", p_1: "p", p_2: "2"
         |    childrenOpt: {
-        |      create: [{c: "c3"},{c: "c4"}]
+        |      create: [{c: "c3", c_1: "ao", c_2: "bo"},{c: "c4", c_1: "go", c_2: "zo"}]
         |    }
         |  }){
         |    ${t.parent.selection}

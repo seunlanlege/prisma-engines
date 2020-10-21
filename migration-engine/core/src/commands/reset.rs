@@ -1,23 +1,22 @@
-use crate::commands::command::*;
 use crate::migration_engine::MigrationEngine;
-use migration_connector::*;
-use serde_json::json;
+use crate::{commands::command::MigrationCommand, CoreResult};
+use migration_connector::{DatabaseMigrationMarker, MigrationConnector};
 
+/// The `reset` command.
 pub struct ResetCommand;
 
 #[async_trait::async_trait]
 impl<'a> MigrationCommand for ResetCommand {
-    type Input = serde_json::Value;
-    type Output = serde_json::Value;
+    type Input = ();
+    type Output = ();
 
-    async fn execute<C, D>(_input: &Self::Input, engine: &MigrationEngine<C, D>) -> CommandResult<Self::Output>
+    async fn execute<C, D>(_input: &Self::Input, engine: &MigrationEngine<C, D>) -> CoreResult<Self::Output>
     where
         C: MigrationConnector<DatabaseMigration = D>,
         D: DatabaseMigrationMarker + 'static,
     {
         engine.reset().await?;
-        engine.init().await?;
 
-        Ok(json!({}))
+        Ok(())
     }
 }

@@ -15,8 +15,8 @@ fn must_add_new_line_to_end_of_schema() {
 #[test]
 fn test_reformat_model_simple() {
     let input = r#"
-        model User { 
-            id               Int                   @id 
+        model User {
+            id               Int                   @id
         }
     "#;
 
@@ -32,12 +32,12 @@ fn test_reformat_model_simple() {
 fn test_reformat_model_complex() {
     let input = r#"
         /// model doc comment
-        model User { 
+        model User {
             id Int @id // doc comment on the side
             fieldA String    @unique // comment on the side
             // comment before
             /// doc comment before
-            anotherWeirdFieldName Int 
+            anotherWeirdFieldName Int
         }
     "#;
 
@@ -68,6 +68,137 @@ model Post {
   id           Int    @id
   this is an invalid line
   anotherField String
+}
+"#;
+
+    assert_reformat(input, expected);
+}
+
+#[test]
+fn format_should_enforce_order_of_field_attributes() {
+    let input = r#"model Post {
+  id        Int      @default(autoincrement()) @id
+  published Boolean  @map("_published") @default(false)
+  author    User?   @relation(fields: [authorId], references: [id])
+  authorId  Int?
+}
+
+model User {
+  megaField DateTime @map("mega_field") @id @default("_megaField") @unique @updatedAt
+}
+
+model Test {
+  id     Int   @id @map("_id") @default(1) @updatedAt
+  blogId Int?  @unique @default(1)
+}
+"#;
+    let expected = r#"model Post {
+  id        Int     @id @default(autoincrement())
+  published Boolean @default(false) @map("_published")
+  author    User?   @relation(fields: [authorId], references: [id])
+  authorId  Int?
+}
+
+model User {
+  megaField DateTime @id @unique @default("_megaField") @updatedAt @map("mega_field")
+}
+
+model Test {
+  id     Int  @id @default(1) @updatedAt @map("_id")
+  blogId Int? @unique @default(1)
+}
+"#;
+
+    assert_reformat(input, expected);
+}
+
+#[test]
+fn format_should_enforce_order_of_block_attributes() {
+    let input = r#"model Person {
+  firstName   String
+  lastName    String
+  codeName    String
+  yearOfBirth Int
+  @@map("blog")
+  @@index([yearOfBirth])
+  @@unique([codeName, yearOfBirth])
+  @@id([firstName, lastName])
+}
+
+model Blog {
+  id    Int    @default(1)
+  name  String
+  posts Post[]
+  @@id([id])
+  @@index([id, name])
+  @@unique([name])
+  @@map("blog")
+}
+"#;
+    let expected = r#"model Person {
+  firstName   String
+  lastName    String
+  codeName    String
+  yearOfBirth Int
+
+  @@id([firstName, lastName])
+  @@unique([codeName, yearOfBirth])
+  @@index([yearOfBirth])
+  @@map("blog")
+}
+
+model Blog {
+  id    Int    @default(1)
+  name  String
+  posts Post[]
+
+  @@id([id])
+  @@unique([name])
+  @@index([id, name])
+  @@map("blog")
+}
+"#;
+
+    assert_reformat(input, expected);
+}
+
+#[test]
+#[ignore]
+fn format_should_put_block_attributes_to_end_of_block_with_comments() {
+    let input = r#"model Blog {
+  @@id([id1, id2]) /// id comment
+  id1 Int
+  id2 Int
+  @@map("blog") /// blog comment
+}
+"#;
+    let expected = r#"model Blog {
+  id1 Int
+  id2 Int
+
+  @@map("blog") /// blog comment
+  @@id([id1, id2]) /// id comment
+}
+"#;
+
+    assert_reformat(input, expected);
+}
+
+#[test]
+fn format_should_put_block_attributes_to_end_of_block_without_comments() {
+    let input = r#"model Blog {
+  @@map("blog")
+  id1 Int
+  id2 Int
+  @@id([id1, id2])
+}
+"#;
+    let expected = r#"model Blog {
+  id1 Int
+  id2 Int
+
+  @@id([id1, id2])
+  @@map("blog")
 }
 "#;
 
@@ -138,11 +269,11 @@ fn commented_models_dont_get_removed() {
         // model One {
         //   id Int @id
         // }
-        
+
         model Two {
           id Int @id
         }
-        
+
         // model Three {
         //   id Int @id
         // }
@@ -167,7 +298,7 @@ model Two {
 #[test]
 fn a_comment_in_datasource_must_not_add_extra_newlines() {
     let input = r#"
-        datasource pg { 
+        datasource pg {
             provider = "postgresql"
             url = "postgresql://"
             // a comment
@@ -187,7 +318,7 @@ fn a_comment_in_datasource_must_not_add_extra_newlines() {
 #[test]
 fn a_comment_in_generator_must_not_add_extra_newlines() {
     let input = r#"
-        generator js { 
+        generator js {
             provider = "js"
             // a comment
         }
@@ -205,7 +336,7 @@ fn a_comment_in_generator_must_not_add_extra_newlines() {
 #[test]
 fn test_reformat_config() {
     let input = r#"
-        datasource pg { 
+        datasource pg {
             provider = "postgresql"
             url = "postgresql://"
         }
@@ -255,6 +386,7 @@ model a {
   one Int
   two Int
   // bs  b[] @relation(references: [a])
+
   @@id([one, two])
 }
 
@@ -272,6 +404,7 @@ model a {
   one Int
   two Int
   // bs  b[] @relation(references: [a])
+
   @@id([one, two])
 }
 
@@ -283,6 +416,7 @@ model a {
   one Int
   two Int
   // bs  b[] @relation(references: [a])
+
   @@id([one, two])
 }
 
@@ -302,7 +436,7 @@ fn reformatting_enums_must_work() {
 
   // comment
   ORANGE_AND_KIND_OF_RED @map("super_color")
-  
+
   @@map("the_colors")
 }
 "#;
@@ -324,7 +458,7 @@ fn reformatting_enums_must_work() {
 #[test]
 fn reformatting_must_work_when_env_var_is_missing() {
     let input = r#"
-        datasource pg { 
+        datasource pg {
             provider = "postgresql"
             url = env("DATABASE_URL")
         }
@@ -389,6 +523,30 @@ fn reformatting_an_invalid_generator_block_must_work() {
 }
 
 #[test]
+fn reformatting_a_model_with_native_type_definitions_must_work() {
+    let input = r#"datasource pg {
+  provider = "postgres"
+  url      = "postgresql://"
+}
+
+generator js {
+  provider        = "prisma-client-js"
+  previewFeatures = ["nativeTypes"]
+}
+
+model Blog {
+  id     Int    @id
+  bigInt Int    @pg.BigInt
+  foobar String @pg.VarChar(12)
+}
+"#;
+
+    let expected = input;
+
+    assert_reformat(input, expected);
+}
+
+#[test]
 fn incomplete_field_definitions_in_a_model_must_not_get_removed() {
     // incomplete field definitions are handled in a special way in the grammar to allow nice errors. See `nice_error.rs:nice_error_missing_type`
     // Hence the block level catch does not apply here. So we must test this specifically.
@@ -400,6 +558,54 @@ fn incomplete_field_definitions_in_a_model_must_not_get_removed() {
 "#;
 
     assert_reformat(input, input);
+}
+
+#[test]
+fn new_lines_inside_block_above_field_must_stay() {
+    let input = r#"model Post {
+
+
+
+
+  id Int @id @default(autoincrement())
+}
+"#;
+
+    let expected = input;
+
+    assert_reformat(input, expected);
+}
+
+#[test]
+fn new_lines_inside_block_below_field_must_stay() {
+    let input = r#"model Post {
+  id Int @id @default(autoincrement())
+
+
+
+
+}
+"#;
+
+    let expected = input;
+
+    assert_reformat(input, expected);
+}
+
+#[test]
+fn new_lines_inside_block_in_between_fields_must_stay() {
+    let input = r#"model Post {
+  id Int @id @default(autoincrement())
+
+
+  input String
+
+}
+"#;
+
+    let expected = input;
+
+    assert_reformat(input, expected);
 }
 
 #[test]
@@ -575,20 +781,22 @@ model Comment {
 }
 
 #[test]
-fn model_level_directives_reset_the_table_layout() {
+fn model_level_attributes_reset_the_table_layout() {
     let input = r#"model Post {
   id Int @id
   aVeryLongName  String
-  @@index([a])
   alsoAVeryLongName String
+
+  @@index([a])
 }
 "#;
 
     let expected = r#"model Post {
-  id            Int    @id
-  aVeryLongName String
-  @@index([a])
+  id                Int    @id
+  aVeryLongName     String
   alsoAVeryLongName String
+
+  @@index([a])
 }
 "#;
 

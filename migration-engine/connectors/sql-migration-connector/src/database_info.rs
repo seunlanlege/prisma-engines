@@ -1,6 +1,6 @@
-use super::SqlResult;
-use datamodel::Datamodel;
-use migration_connector::MigrationError;
+use crate::error::quaint_error_to_connector_error;
+use datamodel::{walkers::walk_scalar_fields, Datamodel};
+use migration_connector::ConnectorResult;
 use quaint::{
     prelude::{ConnectionInfo, Queryable, SqlFamily},
     single::Quaint,
@@ -9,12 +9,15 @@ use quaint::{
 #[derive(Debug, Clone)]
 pub struct DatabaseInfo {
     connection_info: ConnectionInfo,
-    database_version: Option<String>,
+    pub database_version: Option<String>,
 }
 
 impl DatabaseInfo {
-    pub(crate) async fn new(connection: &Quaint, connection_info: ConnectionInfo) -> SqlResult<Self> {
-        let database_version = get_database_version(connection, &connection_info).await?;
+    pub(crate) async fn new(connection: &Quaint, connection_info: ConnectionInfo) -> ConnectorResult<Self> {
+        let database_version = connection
+            .version()
+            .await
+            .map_err(|err| quaint_error_to_connector_error(err, &connection_info))?;
 
         Ok(DatabaseInfo {
             connection_info,
@@ -27,7 +30,7 @@ impl DatabaseInfo {
             && self
                 .database_version
                 .as_ref()
-                .map(|version| version.contains("5.6"))
+                .map(|version| version.starts_with("5.6"))
                 .unwrap_or(false)
     }
 
@@ -48,46 +51,43 @@ impl DatabaseInfo {
         &self.connection_info
     }
 
-    pub(crate) fn check_database_version_compatibility(&self, datamodel: &Datamodel) -> Vec<MigrationError> {
+    pub(crate) fn check_database_version_compatibility(
+        &self,
+        datamodel: &Datamodel,
+    ) -> Option<user_facing_errors::common::DatabaseVersionIncompatibility> {
         let mut errors = Vec::new();
 
         if self.is_mysql_5_6() {
             check_datamodel_for_mysql_5_6(datamodel, &mut errors)
         }
 
-        errors
-    }
-}
-
-async fn get_database_version(connection: &Quaint, connection_info: &ConnectionInfo) -> SqlResult<Option<String>> {
-    match connection_info.sql_family() {
-        SqlFamily::Mysql => {
-            let query = r#"SELECT @@GLOBAL.version version"#;
-
-            let rows = connection.query_raw(query, &[]).await?;
-
-            let version_string = rows
-                .get(0)
-                .and_then(|row| row.get("version").and_then(|version| version.to_string()));
-
-            Ok(version_string)
+        if errors.is_empty() {
+            return None;
         }
-        _ => Ok(None),
+
+        let mut errors_string = String::with_capacity(errors.iter().map(|err| err.len() + 3).sum());
+
+        for error in &errors {
+            errors_string.push_str("- ");
+            errors_string.push_str(error);
+            errors_string.push_str("\n");
+        }
+
+        Some(user_facing_errors::common::DatabaseVersionIncompatibility {
+            errors: errors_string,
+            database_version: self.database_version.as_ref().unwrap().clone(),
+        })
     }
 }
 
-fn check_datamodel_for_mysql_5_6(datamodel: &Datamodel, errors: &mut Vec<MigrationError>) {
-    crate::datamodel_helpers::walk_fields(datamodel).for_each(|field| {
+fn check_datamodel_for_mysql_5_6(datamodel: &Datamodel, errors: &mut Vec<String>) {
+    walk_scalar_fields(datamodel).for_each(|field| {
         if field.field_type().is_json() {
-            errors.push(MigrationError {
-                description: format!(
-                    "The `Json` data type used in {}.{} is not supported on MySQL 5.6.",
-                    field.model().name(),
-                    field.name()
-                ),
-                field: None,
-                tpe: "".into(),
-            })
+            errors.push(format!(
+                "The `Json` data type used in {}.{} is not supported on MySQL 5.6.",
+                field.model().name(),
+                field.name()
+            ))
         }
     });
 }

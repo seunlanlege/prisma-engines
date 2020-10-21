@@ -1,5 +1,5 @@
 use crate::common::*;
-use datamodel::{common::ScalarType, DefaultValue};
+use datamodel::{DefaultValue, ScalarType};
 use prisma_value::PrismaValue;
 
 #[test]
@@ -20,13 +20,13 @@ fn skipping_of_env_vars() {
     parse_error(dml);
 
     // must not fail when ignore flag is set
-    if let Err(err) = datamodel::parse_datamodel_and_ignore_env_errors(dml) {
+    if let Err(err) = datamodel::parse_datamodel_and_ignore_datasource_urls(dml) {
         panic!("Skipping env var errors did not work. Error was {:?}", err)
     }
 
     // must not fail with invalid env var set and ignore flag is set
     std::env::set_var("POSTGRES_URL", "mysql://"); // wrong protocol
-    if let Err(err) = datamodel::parse_datamodel_and_ignore_env_errors(dml) {
+    if let Err(err) = datamodel::parse_datamodel_and_ignore_datasource_urls(dml) {
         panic!("Skipping env var errors did not work. Error was {:?}", err)
     }
 
@@ -52,7 +52,7 @@ fn interpolate_environment_variables() {
     let user_model = schema.assert_has_model("User");
     user_model.assert_is_embedded(false);
     user_model
-        .assert_has_field("firstName")
+        .assert_has_scalar_field("firstName")
         .assert_base_type(&ScalarType::String)
         .assert_default_value(DefaultValue::Single(PrismaValue::String(String::from("prisma-user"))));
 }
@@ -76,7 +76,7 @@ fn interpolate_nested_environment_variables() {
     let user_model = schema.assert_has_model("User");
     user_model.assert_is_embedded(false);
     user_model
-        .assert_has_field("firstName")
+        .assert_has_scalar_field("firstName")
         .assert_base_type(&ScalarType::String)
         .assert_default_value(DefaultValue::Single(PrismaValue::String(String::from("prisma-user"))));
 }
@@ -98,7 +98,7 @@ fn ducktype_environment_variables() {
     let user_model = schema.assert_has_model("User");
     user_model.assert_is_embedded(false);
     user_model
-        .assert_has_field("age")
+        .assert_has_scalar_field("age")
         .assert_base_type(&ScalarType::Int)
         .assert_default_value(DefaultValue::Single(PrismaValue::Int(18)));
 }

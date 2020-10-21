@@ -1,6 +1,7 @@
 use crate::common::*;
 use datamodel::ast::Span;
-use datamodel::error::DatamodelError;
+use datamodel::common::preview_features::DATASOURCE_PREVIEW_FEATURES;
+use datamodel::diagnostics::DatamodelError;
 
 #[test]
 fn nice_error_for_missing_model_keyword() {
@@ -13,10 +14,34 @@ fn nice_error_for_missing_model_keyword() {
     let error = parse_error(dml);
 
     error.assert_is(DatamodelError::new_validation_error(
-        "This block is invalid. It does not start with any known Prisma schema keyword.",
+        "This block is invalid. It does not start with any known Prisma schema keyword. Valid keywords include 'model', 'enum', 'datasource' and 'generator'.",
         Span::new(5, 36),
     ));
 }
+
+#[test]
+fn nice_error_for_unknown_datasource_preview_feature() {
+    let dml = r#"
+    datasource ds {
+        provider = "postgres"
+        url = "postgresql://"
+        previewFeatures = ["foo"]
+    }
+
+    model User {
+        id Int @id
+    }
+    "#;
+
+    let error = parse_error(dml);
+
+    error.assert_is(DatamodelError::new_preview_feature_not_known_error(
+        "foo",
+        Vec::from(DATASOURCE_PREVIEW_FEATURES),
+        Span::new(107, 114),
+    ));
+}
+
 #[test]
 fn nice_error_for_missing_model_keyword_2() {
     let dml = r#"
@@ -31,7 +56,7 @@ fn nice_error_for_missing_model_keyword_2() {
     let error = parse_error(dml);
 
     error.assert_is(DatamodelError::new_validation_error(
-        "This block is invalid. It does not start with any known Prisma schema keyword.",
+        "This block is invalid. It does not start with any known Prisma schema keyword. Valid keywords include 'model', 'enum', 'datasource' and 'generator'.",
         Span::new(47, 70),
     ));
 }
@@ -72,7 +97,7 @@ fn nice_error_missing_type() {
 }
 
 #[test]
-fn nice_error_missing_directive_name() {
+fn nice_error_missing_attribute_name() {
     let dml = r#"
     model User {
         id Int @id @
@@ -82,7 +107,7 @@ fn nice_error_missing_directive_name() {
     let error = parse_error(dml);
 
     error.assert_is(DatamodelError::new_validation_error(
-        "The name of a Directive must not be empty.",
+        "The name of a Attribute must not be empty.",
         Span::new(38, 38),
     ));
 }
@@ -174,6 +199,82 @@ fn nice_error_legacy_model_decl() {
 }
 
 #[test]
+fn nice_error_in_case_of_literal_type_in_env_var() {
+    let source = r#"
+    datasource ds {
+      provider = "postgresql"
+      url = env(DATABASE_URL)
+    }
+    "#;
+
+    let error = parse_error_and_ignore_datasource_urls(source);
+
+    error.assert_is(DatamodelError::new_type_mismatch_error(
+        "String",
+        "literal",
+        "DATABASE_URL",
+        Span::new(67, 79),
+    ));
+}
+
+#[test]
+fn nice_error_in_case_of_bool_type_in_env_var() {
+    let source = r#"
+    datasource ds {
+      provider = "postgresql"
+      url = env(true)
+    }
+    "#;
+
+    let error = parse_error_and_ignore_datasource_urls(source);
+
+    error.assert_is(DatamodelError::new_type_mismatch_error(
+        "String",
+        "boolean",
+        "true",
+        Span::new(67, 71),
+    ));
+}
+
+#[test]
+fn nice_error_in_case_of_numeric_type_in_env_var() {
+    let source = r#"
+    datasource ds {
+      provider = "postgresql"
+      url = env(4)
+    }
+    "#;
+
+    let error = parse_error_and_ignore_datasource_urls(source);
+
+    error.assert_is(DatamodelError::new_type_mismatch_error(
+        "String",
+        "numeric",
+        "4",
+        Span::new(67, 68),
+    ));
+}
+
+#[test]
+fn nice_error_in_case_of_array_type_in_env_var() {
+    let source = r#"
+    datasource ds {
+      provider = "postgresql"
+      url = env([DATABASE_URL])
+    }
+    "#;
+
+    let error = parse_error_and_ignore_datasource_urls(source);
+
+    error.assert_is(DatamodelError::new_type_mismatch_error(
+        "String",
+        "array",
+        "(array)",
+        Span::new(67, 81),
+    ));
+}
+
+#[test]
 fn optional_list_fields_must_error() {
     let dml = r#"
     model User {
@@ -257,7 +358,7 @@ fn invalid_field_line_must_error_nicely() {
     let error = parse_error(dml);
 
     error.assert_is(DatamodelError::new_validation_error(
-        "This line is not a valid field or directive definition.",
+        "This line is not a valid field or attribute definition.",
         Span::new(43, 57),
     ));
 }

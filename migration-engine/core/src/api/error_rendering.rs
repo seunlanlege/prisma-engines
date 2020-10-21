@@ -1,37 +1,15 @@
-use crate::{commands::CommandError, error::Error as CoreError};
+use crate::CoreError;
 use jsonrpc_core::types::Error as JsonRpcError;
-use migration_connector::ConnectorError;
-use user_facing_errors::{Error, KnownError};
-
-pub fn render_error(crate_error: CoreError) -> Error {
-    match crate_error {
-        CoreError::ConnectorError(ConnectorError {
-            user_facing_error: Some(user_facing_error),
-            ..
-        }) => user_facing_error.into(),
-        CoreError::CommandError(CommandError::ConnectorError(ConnectorError {
-            user_facing_error: Some(user_facing_error),
-            ..
-        })) => user_facing_error.into(),
-        CoreError::CommandError(CommandError::ReceivedBadDatamodel(full_error)) => {
-            KnownError::new(user_facing_errors::common::SchemaParserError { full_error })
-                .unwrap()
-                .into()
-        }
-        _ => Error::from_dyn_error(&crate_error),
-    }
-}
 
 pub(super) fn render_jsonrpc_error(crate_error: CoreError) -> JsonRpcError {
-    let prisma_error = render_error(crate_error);
-
-    let error_rendering_result: Result<_, _> = serde_json::to_value(&prisma_error).map(|data| JsonRpcError {
-        // We separate the JSON-RPC error code (defined by the JSON-RPC spec) from the
-        // prisma error code, which is located in `data`.
-        code: jsonrpc_core::types::error::ErrorCode::ServerError(4466),
-        message: "An error happened. Check the data field for details.".to_string(),
-        data: Some(data),
-    });
+    let error_rendering_result: Result<_, _> =
+        serde_json::to_value(&crate_error.render_user_facing()).map(|data| JsonRpcError {
+            // We separate the JSON-RPC error code (defined by the JSON-RPC spec) from the
+            // prisma error code, which is located in `data`.
+            code: jsonrpc_core::types::error::ErrorCode::ServerError(4466),
+            message: "An error happened. Check the data field for details.".to_string(),
+            data: Some(data),
+        });
 
     match error_rendering_result {
         Ok(err) => err,
@@ -48,24 +26,4 @@ fn fallback_jsonrpc_error(err: impl std::error::Error) -> JsonRpcError {
         message: "The migration engine encountered an error and failed to render it.".to_string(),
         data: Some(serde_json::json!({ "backtrace": null, "message": format!("{}", err) })),
     }
-}
-
-pub fn pretty_print_datamodel_errors(
-    errors: &datamodel::error::ErrorCollection,
-    datamodel: &str,
-) -> std::io::Result<String> {
-    use std::io::Write as _;
-
-    let file_name = "schema.prisma";
-
-    let mut message: Vec<u8> = Vec::new();
-
-    for error in errors.to_iter() {
-        writeln!(&mut message)?;
-        error
-            .pretty_print(&mut message, file_name, datamodel)
-            .expect("Failed to write errors to stderr");
-    }
-
-    Ok(String::from_utf8_lossy(&message).into_owned())
 }

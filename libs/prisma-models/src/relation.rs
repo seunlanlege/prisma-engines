@@ -1,6 +1,9 @@
 use crate::prelude::*;
 use once_cell::sync::OnceCell;
-use std::sync::{Arc, Weak};
+use std::{
+    fmt::Debug,
+    sync::{Arc, Weak},
+};
 
 pub type RelationRef = Arc<Relation>;
 pub type RelationWeakRef = Weak<Relation>;
@@ -17,7 +20,6 @@ pub struct RelationTemplate {
 
 /// A relation between two models. Can be either using a `RelationTable` or
 /// model a direct link between two `RelationField`s.
-#[derive(DebugStub)]
 pub struct Relation {
     pub name: String,
 
@@ -35,8 +37,25 @@ pub struct Relation {
 
     pub manifestation: RelationLinkManifestation,
 
-    #[debug_stub = "#InternalDataModelWeakRef#"]
     pub internal_data_model: InternalDataModelWeakRef,
+}
+
+impl Debug for Relation {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Relation")
+            .field("name", &self.name)
+            .field("model_a_name", &self.model_a_name)
+            .field("model_b_name", &self.model_b_name)
+            .field("model_a_on_delete", &self.model_a_on_delete)
+            .field("model_b_on_delete", &self.model_b_on_delete)
+            .field("model_a", &self.model_a)
+            .field("model_b", &self.model_b)
+            .field("field_a", &self.field_a)
+            .field("field_b", &self.field_b)
+            .field("manifestation", &self.manifestation)
+            .field("internal_data_model", &"#InternalDataModelWeakRef#")
+            .finish()
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -107,10 +126,7 @@ impl Relation {
     /// Returns `true` only if the `Relation` is just a link between two
     /// `RelationField`s.
     pub fn is_inline_relation(&self) -> bool {
-        match self.manifestation {
-            RelationLinkManifestation::Inline(_) => true,
-            _ => false,
-        }
+        matches!(self.manifestation, RelationLinkManifestation::Inline(_))
     }
 
     /// Returns `true` if the `Relation` is a table linking two models.
@@ -189,32 +205,6 @@ impl Relation {
 
     pub fn is_one_to_many(&self) -> bool {
         !self.is_many_to_many() && !self.is_one_to_one()
-    }
-
-    pub fn contains_the_model(&self, model: ModelRef) -> bool {
-        self.model_a().name == model.name || self.model_b().name == model.name
-    }
-
-    pub fn get_field_on_model(&self, model_id: &str) -> crate::Result<Arc<RelationField>> {
-        if model_id == self.model_a().name {
-            Ok(self.field_a())
-        } else if model_id == self.model_b().name {
-            Ok(self.field_b())
-        } else {
-            Err(DomainError::ModelForRelationNotFound {
-                model_id: model_id.to_string(),
-                relation: self.name.clone(),
-            })
-        }
-    }
-
-    pub fn inline_manifestation(&self) -> Option<&InlineRelation> {
-        use RelationLinkManifestation::*;
-
-        match self.manifestation {
-            Inline(ref m) => Some(m),
-            _ => None,
-        }
     }
 
     pub fn internal_data_model(&self) -> InternalDataModelRef {

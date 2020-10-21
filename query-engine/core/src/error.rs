@@ -1,36 +1,39 @@
-use crate::{InterpreterError, QueryGraphBuilderError, QueryGraphError, QueryParserError, RelationViolation};
+use crate::{
+    InterpreterError, QueryGraphBuilderError, QueryGraphError, QueryParserError, QueryParserErrorKind,
+    RelationViolation,
+};
 use connector::error::ConnectorError;
-use failure::Fail;
 use prisma_models::DomainError;
+use thiserror::Error;
 
 // TODO: Cleanup unused errors after refactorings.
-#[derive(Debug, Fail)]
+#[derive(Debug, Error)]
 pub enum CoreError {
-    #[fail(display = "Error in query graph construction: {:?}", _0)]
+    #[error("Error in query graph construction: {:?}", _0)]
     QueryGraphError(QueryGraphError),
 
-    #[fail(display = "Error in query graph construction: {:?}", _0)]
+    #[error("Error in query graph construction: {:?}", _0)]
     QueryGraphBuilderError(QueryGraphBuilderError),
 
-    #[fail(display = "Error in connector: {}", _0)]
+    #[error("Error in connector: {}", _0)]
     ConnectorError(ConnectorError),
 
-    #[fail(display = "Error in domain logic: {}", _0)]
+    #[error("Error in domain logic: {}", _0)]
     DomainError(DomainError),
 
-    #[fail(display = "{}", _0)]
+    #[error("{0}")]
     QueryParserError(QueryParserError),
 
-    #[fail(display = "Unsupported feature: {}", _0)]
+    #[error("Unsupported feature: {}", _0)]
     UnsupportedFeatureError(String),
 
-    #[fail(display = "{}", _0)]
+    #[error("{}", _0)]
     ConversionError(String),
 
-    #[fail(display = "{}", _0)]
+    #[error("{}", _0)]
     SerializationError(String),
 
-    #[fail(display = "{}", _0)]
+    #[error("{}", _0)]
     InterpreterError(InterpreterError),
 }
 
@@ -83,16 +86,17 @@ impl From<CoreError> for user_facing_errors::Error {
             })) => user_facing_error.into(),
             CoreError::QueryParserError(query_parser_error)
             | CoreError::QueryGraphBuilderError(QueryGraphBuilderError::QueryParserError(query_parser_error)) => {
-                let known_error = query_parser_error
-                    .as_missing_value_error()
-                    .map(|err| user_facing_errors::KnownError::new(err).unwrap())
-                    .unwrap_or_else(|| {
-                        user_facing_errors::KnownError::new(user_facing_errors::query_engine::QueryValidationFailed {
-                            query_validation_error: format!("{}", query_parser_error),
-                            query_position: format!("{}", query_parser_error.location()),
+                let known_error = match query_parser_error.error_kind {
+                    QueryParserErrorKind::RequiredValueNotSetError => {
+                        user_facing_errors::KnownError::new(user_facing_errors::query_engine::MissingRequiredValue {
+                            path: format!("{}", query_parser_error.path),
                         })
-                        .unwrap()
-                    });
+                    }
+                    _ => user_facing_errors::KnownError::new(user_facing_errors::query_engine::QueryValidationFailed {
+                        query_validation_error: format!("{}", query_parser_error.error_kind),
+                        query_position: format!("{}", query_parser_error.path),
+                    }),
+                };
 
                 known_error.into()
             }
@@ -105,7 +109,6 @@ impl From<CoreError> for user_facing_errors::Error {
                 field_name,
                 object_name,
             })
-            .unwrap()
             .into(),
             CoreError::QueryGraphBuilderError(QueryGraphBuilderError::RelationViolation(RelationViolation {
                 model_a_name,
@@ -123,7 +126,6 @@ impl From<CoreError> for user_facing_errors::Error {
                 model_b_name,
                 relation_name,
             })
-            .unwrap()
             .into(),
             CoreError::QueryGraphBuilderError(QueryGraphBuilderError::RecordNotFound(details))
             | CoreError::InterpreterError(InterpreterError::QueryGraphBuilderError(
@@ -131,12 +133,9 @@ impl From<CoreError> for user_facing_errors::Error {
             )) => user_facing_errors::KnownError::new(user_facing_errors::query_engine::ConnectedRecordsNotFound {
                 details,
             })
-            .unwrap()
             .into(),
             CoreError::QueryGraphBuilderError(QueryGraphBuilderError::InputError(details)) => {
-                user_facing_errors::KnownError::new(user_facing_errors::query_engine::InputError { details })
-                    .unwrap()
-                    .into()
+                user_facing_errors::KnownError::new(user_facing_errors::query_engine::InputError { details }).into()
             }
             CoreError::InterpreterError(InterpreterError::InterpretationError(msg, Some(cause))) => {
                 match cause.as_ref() {
@@ -151,7 +150,6 @@ impl From<CoreError> for user_facing_errors::Error {
                         model_b_name: model_b_name.clone(),
                         relation_name: relation_name.clone(),
                     })
-                    .unwrap()
                     .into(),
                     InterpreterError::QueryGraphBuilderError(QueryGraphBuilderError::RecordsNotConnected {
                         parent_name,
@@ -162,16 +160,14 @@ impl From<CoreError> for user_facing_errors::Error {
                         child_name: child_name.clone(),
                         relation_name: relation_name.clone(),
                     })
-                    .unwrap()
                     .into(),
                     _ => user_facing_errors::KnownError::new(user_facing_errors::query_engine::InterpretationError {
                         details: format!("{}: {}", msg, cause),
                     })
-                    .unwrap()
                     .into(),
                 }
             }
-            _ => user_facing_errors::Error::from_dyn_error(&err.compat()),
+            _ => user_facing_errors::Error::from_dyn_error(&err),
         }
     }
 }

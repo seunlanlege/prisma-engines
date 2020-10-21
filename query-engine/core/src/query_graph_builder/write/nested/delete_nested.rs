@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     query_ast::*,
     query_graph::{Node, NodeRef, QueryGraph, QueryGraphDependency},
-    InputAssertions, ParsedInputMap, ParsedInputValue,
+    ParsedInputMap, ParsedInputValue,
 };
 use connector::{Filter, RecordFilter};
 use prisma_models::{ModelRef, PrismaValue, RelationFieldRef};
@@ -34,10 +34,6 @@ pub fn nested_delete(
             .into_iter()
             .map(|value: ParsedInputValue| {
                 let value: ParsedInputMap = value.try_into()?;
-
-                value.assert_size(1)?;
-                value.assert_non_null()?;
-
                 extract_unique_filter(value, &child_model)
             })
             .collect::<QueryGraphBuilderResult<Vec<Filter>>>()?;
@@ -102,9 +98,7 @@ pub fn nested_delete(
                  QueryGraphDependency::ParentProjection(child_model_identifier, Box::new(move |mut delete_record_node, mut child_ids| {
                      let child_id = match child_ids.pop() {
                          Some(pid) => Ok(pid),
-                         None => Err(QueryGraphBuilderError::AssertionError(format!(
-                             "[Query Graph] Expected a valid parent ID to be present for a nested delete on a one-to-many relation."
-                         ))),
+                         None => Err(QueryGraphBuilderError::AssertionError("[Query Graph] Expected a valid parent ID to be present for a nested delete on a one-to-many relation.".to_string())),
                      }?;
 
                      if let Node::Query(Query::Write(WriteQuery::DeleteRecord(ref mut dq))) = delete_record_node {

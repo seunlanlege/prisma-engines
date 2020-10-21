@@ -23,6 +23,13 @@ pub enum ScalarProjection {
 pub struct ScalarFilter {
     pub projection: ScalarProjection,
     pub condition: ScalarCondition,
+    pub mode: QueryMode,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub enum QueryMode {
+    Default,
+    Insensitive,
 }
 
 /// Number of allowed elements in query's `IN` or `NOT IN` statement.
@@ -70,6 +77,8 @@ impl ScalarFilter {
             batches
         }
 
+        let mode = self.mode.clone();
+
         match self.condition {
             ScalarCondition::In(list) => {
                 let projection = self.projection;
@@ -79,9 +88,11 @@ impl ScalarFilter {
                     .map(|batch| ScalarFilter {
                         projection: projection.clone(),
                         condition: ScalarCondition::In(batch),
+                        mode: mode.clone(),
                     })
                     .collect()
             }
+
             ScalarCondition::NotIn(list) => {
                 let projection = self.projection;
 
@@ -90,6 +101,7 @@ impl ScalarFilter {
                     .map(|batch| ScalarFilter {
                         projection: projection.clone(),
                         condition: ScalarCondition::NotIn(batch),
+                        mode: mode.clone(),
                     })
                     .collect()
             }
@@ -125,6 +137,7 @@ impl ScalarCompare for ScalarFieldRef {
         Filter::from(ScalarFilter {
             projection: ScalarProjection::Single(Arc::clone(self)),
             condition: ScalarCondition::In(values.into_iter().map(|i| i.into()).collect()),
+            mode: QueryMode::Default,
         })
     }
 
@@ -136,6 +149,7 @@ impl ScalarCompare for ScalarFieldRef {
         Filter::from(ScalarFilter {
             projection: ScalarProjection::Single(Arc::clone(self)),
             condition: ScalarCondition::NotIn(values.into_iter().map(|i| i.into()).collect()),
+            mode: QueryMode::Default,
         })
     }
 
@@ -147,6 +161,7 @@ impl ScalarCompare for ScalarFieldRef {
         Filter::from(ScalarFilter {
             projection: ScalarProjection::Single(Arc::clone(self)),
             condition: ScalarCondition::Equals(val.into()),
+            mode: QueryMode::Default,
         })
     }
 
@@ -158,6 +173,7 @@ impl ScalarCompare for ScalarFieldRef {
         Filter::from(ScalarFilter {
             projection: ScalarProjection::Single(Arc::clone(self)),
             condition: ScalarCondition::NotEquals(val.into()),
+            mode: QueryMode::Default,
         })
     }
 
@@ -169,6 +185,7 @@ impl ScalarCompare for ScalarFieldRef {
         Filter::from(ScalarFilter {
             projection: ScalarProjection::Single(Arc::clone(self)),
             condition: ScalarCondition::Contains(val.into()),
+            mode: QueryMode::Default,
         })
     }
 
@@ -180,6 +197,7 @@ impl ScalarCompare for ScalarFieldRef {
         Filter::from(ScalarFilter {
             projection: ScalarProjection::Single(Arc::clone(self)),
             condition: ScalarCondition::NotContains(val.into()),
+            mode: QueryMode::Default,
         })
     }
 
@@ -191,6 +209,7 @@ impl ScalarCompare for ScalarFieldRef {
         Filter::from(ScalarFilter {
             projection: ScalarProjection::Single(Arc::clone(self)),
             condition: ScalarCondition::StartsWith(val.into()),
+            mode: QueryMode::Default,
         })
     }
 
@@ -202,6 +221,7 @@ impl ScalarCompare for ScalarFieldRef {
         Filter::from(ScalarFilter {
             projection: ScalarProjection::Single(Arc::clone(self)),
             condition: ScalarCondition::NotStartsWith(val.into()),
+            mode: QueryMode::Default,
         })
     }
 
@@ -213,6 +233,7 @@ impl ScalarCompare for ScalarFieldRef {
         Filter::from(ScalarFilter {
             projection: ScalarProjection::Single(Arc::clone(self)),
             condition: ScalarCondition::EndsWith(val.into()),
+            mode: QueryMode::Default,
         })
     }
 
@@ -224,6 +245,7 @@ impl ScalarCompare for ScalarFieldRef {
         Filter::from(ScalarFilter {
             projection: ScalarProjection::Single(Arc::clone(self)),
             condition: ScalarCondition::NotEndsWith(val.into()),
+            mode: QueryMode::Default,
         })
     }
 
@@ -235,6 +257,7 @@ impl ScalarCompare for ScalarFieldRef {
         Filter::from(ScalarFilter {
             projection: ScalarProjection::Single(Arc::clone(self)),
             condition: ScalarCondition::LessThan(val.into()),
+            mode: QueryMode::Default,
         })
     }
 
@@ -246,6 +269,7 @@ impl ScalarCompare for ScalarFieldRef {
         Filter::from(ScalarFilter {
             projection: ScalarProjection::Single(Arc::clone(self)),
             condition: ScalarCondition::LessThanOrEquals(val.into()),
+            mode: QueryMode::Default,
         })
     }
 
@@ -257,6 +281,7 @@ impl ScalarCompare for ScalarFieldRef {
         Filter::from(ScalarFilter {
             projection: ScalarProjection::Single(Arc::clone(self)),
             condition: ScalarCondition::GreaterThan(val.into()),
+            mode: QueryMode::Default,
         })
     }
 
@@ -268,6 +293,7 @@ impl ScalarCompare for ScalarFieldRef {
         Filter::from(ScalarFilter {
             projection: ScalarProjection::Single(Arc::clone(self)),
             condition: ScalarCondition::GreaterThanOrEquals(val.into()),
+            mode: QueryMode::Default,
         })
     }
 }
@@ -281,6 +307,7 @@ impl ScalarCompare for ModelProjection {
         Filter::from(ScalarFilter {
             projection: ScalarProjection::Compound(self.scalar_fields().collect()),
             condition: ScalarCondition::In(values.into_iter().map(|i| i.into()).collect()),
+            mode: QueryMode::Default,
         })
     }
 
@@ -292,6 +319,7 @@ impl ScalarCompare for ModelProjection {
         Filter::from(ScalarFilter {
             projection: ScalarProjection::Compound(self.scalar_fields().collect()),
             condition: ScalarCondition::NotIn(values.into_iter().map(|i| i.into()).collect()),
+            mode: QueryMode::Default,
         })
     }
 
@@ -303,6 +331,7 @@ impl ScalarCompare for ModelProjection {
         Filter::from(ScalarFilter {
             projection: ScalarProjection::Compound(self.scalar_fields().collect()),
             condition: ScalarCondition::Equals(val.into()),
+            mode: QueryMode::Default,
         })
     }
 
@@ -314,6 +343,7 @@ impl ScalarCompare for ModelProjection {
         Filter::from(ScalarFilter {
             projection: ScalarProjection::Compound(self.scalar_fields().collect()),
             condition: ScalarCondition::NotEquals(val.into()),
+            mode: QueryMode::Default,
         })
     }
 
@@ -325,6 +355,7 @@ impl ScalarCompare for ModelProjection {
         Filter::from(ScalarFilter {
             projection: ScalarProjection::Compound(self.scalar_fields().collect()),
             condition: ScalarCondition::Contains(val.into()),
+            mode: QueryMode::Default,
         })
     }
 
@@ -336,6 +367,7 @@ impl ScalarCompare for ModelProjection {
         Filter::from(ScalarFilter {
             projection: ScalarProjection::Compound(self.scalar_fields().collect()),
             condition: ScalarCondition::NotContains(val.into()),
+            mode: QueryMode::Default,
         })
     }
 
@@ -347,6 +379,7 @@ impl ScalarCompare for ModelProjection {
         Filter::from(ScalarFilter {
             projection: ScalarProjection::Compound(self.scalar_fields().collect()),
             condition: ScalarCondition::StartsWith(val.into()),
+            mode: QueryMode::Default,
         })
     }
 
@@ -358,6 +391,7 @@ impl ScalarCompare for ModelProjection {
         Filter::from(ScalarFilter {
             projection: ScalarProjection::Compound(self.scalar_fields().collect()),
             condition: ScalarCondition::NotStartsWith(val.into()),
+            mode: QueryMode::Default,
         })
     }
 
@@ -369,6 +403,7 @@ impl ScalarCompare for ModelProjection {
         Filter::from(ScalarFilter {
             projection: ScalarProjection::Compound(self.scalar_fields().collect()),
             condition: ScalarCondition::EndsWith(val.into()),
+            mode: QueryMode::Default,
         })
     }
 
@@ -380,6 +415,7 @@ impl ScalarCompare for ModelProjection {
         Filter::from(ScalarFilter {
             projection: ScalarProjection::Compound(self.scalar_fields().collect()),
             condition: ScalarCondition::NotEndsWith(val.into()),
+            mode: QueryMode::Default,
         })
     }
 
@@ -391,6 +427,7 @@ impl ScalarCompare for ModelProjection {
         Filter::from(ScalarFilter {
             projection: ScalarProjection::Compound(self.scalar_fields().collect()),
             condition: ScalarCondition::LessThan(val.into()),
+            mode: QueryMode::Default,
         })
     }
 
@@ -402,6 +439,7 @@ impl ScalarCompare for ModelProjection {
         Filter::from(ScalarFilter {
             projection: ScalarProjection::Compound(self.scalar_fields().collect()),
             condition: ScalarCondition::LessThanOrEquals(val.into()),
+            mode: QueryMode::Default,
         })
     }
 
@@ -413,6 +451,7 @@ impl ScalarCompare for ModelProjection {
         Filter::from(ScalarFilter {
             projection: ScalarProjection::Compound(self.scalar_fields().collect()),
             condition: ScalarCondition::GreaterThan(val.into()),
+            mode: QueryMode::Default,
         })
     }
 
@@ -424,251 +463,7 @@ impl ScalarCompare for ModelProjection {
         Filter::from(ScalarFilter {
             projection: ScalarProjection::Compound(self.scalar_fields().collect()),
             condition: ScalarCondition::GreaterThanOrEquals(val.into()),
+            mode: QueryMode::Default,
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::{filter::*, *};
-
-    #[test]
-    #[ignore]
-    fn equals() {
-        let schema = test_data_model();
-        let model = schema.find_model("User").unwrap();
-        let field = model.fields().find_from_scalar("name").unwrap();
-        let filter = field.equals("qwert");
-
-        match filter {
-            Filter::Scalar(ScalarFilter {
-                projection: ScalarProjection::Single(field),
-                condition: ScalarCondition::Equals(val),
-            }) => {
-                assert_eq!(PrismaValue::from("qwert"), val);
-                assert_eq!(String::from("name"), field.name);
-            }
-            _ => unreachable!(),
-        }
-    }
-
-    #[test]
-    #[ignore]
-    fn not_equals() {
-        let schema = test_data_model();
-        let model = schema.find_model("User").unwrap();
-        let field = model.fields().find_from_scalar("name").unwrap();
-        let filter = field.not_equals("qwert");
-
-        match filter {
-            Filter::Scalar(ScalarFilter {
-                projection: ScalarProjection::Single(field),
-                condition: ScalarCondition::NotEquals(val),
-            }) => {
-                assert_eq!(PrismaValue::from("qwert"), val);
-                assert_eq!(String::from("name"), field.name);
-            }
-            _ => unreachable!(),
-        }
-    }
-
-    #[test]
-    #[ignore]
-    fn contains() {
-        let schema = test_data_model();
-        let model = schema.find_model("User").unwrap();
-        let field = model.fields().find_from_scalar("name").unwrap();
-        let filter = field.contains("qwert");
-
-        match filter {
-            Filter::Scalar(ScalarFilter {
-                projection: ScalarProjection::Single(field),
-                condition: ScalarCondition::Contains(val),
-            }) => {
-                assert_eq!(PrismaValue::from("qwert"), val);
-                assert_eq!(String::from("name"), field.name);
-            }
-            _ => unreachable!(),
-        }
-    }
-
-    #[test]
-    #[ignore]
-    fn not_contains() {
-        let schema = test_data_model();
-        let model = schema.find_model("User").unwrap();
-        let field = model.fields().find_from_scalar("name").unwrap();
-        let filter = field.not_contains("qwert");
-
-        match filter {
-            Filter::Scalar(ScalarFilter {
-                projection: ScalarProjection::Single(field),
-                condition: ScalarCondition::NotContains(val),
-            }) => {
-                assert_eq!(PrismaValue::from("qwert"), val);
-                assert_eq!(String::from("name"), field.name);
-            }
-            _ => unreachable!(),
-        }
-    }
-
-    #[test]
-    #[ignore]
-    fn starts_with() {
-        let schema = test_data_model();
-        let model = schema.find_model("User").unwrap();
-        let field = model.fields().find_from_scalar("name").unwrap();
-        let filter = field.starts_with("qwert");
-
-        match filter {
-            Filter::Scalar(ScalarFilter {
-                projection: ScalarProjection::Single(field),
-                condition: ScalarCondition::StartsWith(val),
-            }) => {
-                assert_eq!(PrismaValue::from("qwert"), val);
-                assert_eq!(String::from("name"), field.name);
-            }
-            _ => unreachable!(),
-        }
-    }
-
-    #[test]
-    #[ignore]
-    fn not_starts_with() {
-        let schema = test_data_model();
-        let model = schema.find_model("User").unwrap();
-        let field = model.fields().find_from_scalar("name").unwrap();
-        let filter = field.not_starts_with("qwert");
-
-        match filter {
-            Filter::Scalar(ScalarFilter {
-                projection: ScalarProjection::Single(field),
-                condition: ScalarCondition::NotStartsWith(val),
-            }) => {
-                assert_eq!(PrismaValue::from("qwert"), val);
-                assert_eq!(String::from("name"), field.name);
-            }
-            _ => unreachable!(),
-        }
-    }
-
-    #[test]
-    #[ignore]
-    fn ends_with() {
-        let schema = test_data_model();
-        let model = schema.find_model("User").unwrap();
-        let field = model.fields().find_from_scalar("name").unwrap();
-        let filter = field.ends_with("musti");
-
-        match filter {
-            Filter::Scalar(ScalarFilter {
-                projection: ScalarProjection::Single(field),
-                condition: ScalarCondition::EndsWith(val),
-            }) => {
-                assert_eq!(PrismaValue::from("musti"), val);
-                assert_eq!(String::from("name"), field.name);
-            }
-            _ => unreachable!(),
-        }
-    }
-
-    #[test]
-    #[ignore]
-    fn not_ends_with() {
-        let schema = test_data_model();
-        let model = schema.find_model("User").unwrap();
-        let field = model.fields().find_from_scalar("name").unwrap();
-        let filter = field.not_ends_with("naukio");
-
-        match filter {
-            Filter::Scalar(ScalarFilter {
-                projection: ScalarProjection::Single(field),
-                condition: ScalarCondition::NotEndsWith(val),
-            }) => {
-                assert_eq!(PrismaValue::from("naukio"), val);
-                assert_eq!(String::from("name"), field.name);
-            }
-            _ => unreachable!(),
-        }
-    }
-
-    #[test]
-    #[ignore]
-    fn less_than() {
-        let schema = test_data_model();
-        let model = schema.find_model("User").unwrap();
-        let field = model.fields().find_from_scalar("id").unwrap();
-        let filter = field.less_than(10);
-
-        match filter {
-            Filter::Scalar(ScalarFilter {
-                projection: ScalarProjection::Single(field),
-                condition: ScalarCondition::LessThan(val),
-            }) => {
-                assert_eq!(PrismaValue::from(10), val);
-                assert_eq!(String::from("id"), field.name);
-            }
-            _ => unreachable!(),
-        }
-    }
-
-    #[test]
-    #[ignore]
-    fn less_than_or_equals() {
-        let schema = test_data_model();
-        let model = schema.find_model("User").unwrap();
-        let field = model.fields().find_from_scalar("id").unwrap();
-        let filter = field.less_than_or_equals(10);
-
-        match filter {
-            Filter::Scalar(ScalarFilter {
-                projection: ScalarProjection::Single(field),
-                condition: ScalarCondition::LessThanOrEquals(val),
-            }) => {
-                assert_eq!(PrismaValue::from(10), val);
-                assert_eq!(String::from("id"), field.name);
-            }
-            _ => unreachable!(),
-        }
-    }
-
-    #[test]
-    #[ignore]
-    fn greater_than() {
-        let schema = test_data_model();
-        let model = schema.find_model("User").unwrap();
-        let field = model.fields().find_from_scalar("id").unwrap();
-        let filter = field.greater_than(10);
-
-        match filter {
-            Filter::Scalar(ScalarFilter {
-                projection: ScalarProjection::Single(field),
-                condition: ScalarCondition::GreaterThan(val),
-            }) => {
-                assert_eq!(PrismaValue::from(10), val);
-                assert_eq!(String::from("id"), field.name);
-            }
-            _ => unreachable!(),
-        }
-    }
-
-    #[test]
-    #[ignore]
-    fn greater_then_or_equals() {
-        let schema = test_data_model();
-        let model = schema.find_model("User").unwrap();
-        let field = model.fields().find_from_scalar("id").unwrap();
-        let filter = field.greater_than_or_equals(10);
-
-        match filter {
-            Filter::Scalar(ScalarFilter {
-                projection: ScalarProjection::Single(field),
-                condition: ScalarCondition::GreaterThanOrEquals(val),
-            }) => {
-                assert_eq!(PrismaValue::from(10), val);
-                assert_eq!(String::from("id"), field.name);
-            }
-            _ => unreachable!(),
-        }
     }
 }

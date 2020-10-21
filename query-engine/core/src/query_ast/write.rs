@@ -1,7 +1,7 @@
 //! Write query AST
 use super::FilteredQuery;
 use crate::RawQueryType;
-use connector::{filter::Filter, RecordFilter, WriteArgs};
+use connector::{filter::Filter, DatasourceFieldName, RecordFilter, WriteArgs};
 use prisma_models::prelude::*;
 use std::sync::Arc;
 
@@ -24,7 +24,7 @@ pub enum WriteQuery {
 impl WriteQuery {
     pub fn inject_projection_into_args(&mut self, projection: RecordProjection) {
         let keys = projection.fields().map(|sf| sf.db_name().to_owned()).collect();
-        let values = projection.values().map(|v| v.clone()).collect();
+        let values = projection.values().collect();
 
         self.inject_values_into_args(keys, values);
     }
@@ -45,7 +45,7 @@ impl WriteQuery {
             _ => return,
         };
 
-        args.insert(key, value)
+        args.insert(DatasourceFieldName(key), value)
     }
 
     pub fn returns(&self, projection: &ModelProjection) -> bool {

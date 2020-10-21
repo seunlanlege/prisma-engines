@@ -2,6 +2,7 @@ use crate::prelude::*;
 use datamodel::{FieldArity, RelationInfo};
 use once_cell::sync::OnceCell;
 use std::{
+    fmt::Debug,
     hash::{Hash, Hasher},
     sync::{Arc, Weak},
 };
@@ -15,33 +16,41 @@ pub type RelationFieldWeak = Weak<RelationField>;
 #[derive(Debug)]
 pub struct RelationFieldTemplate {
     pub name: String,
-    pub is_id: bool,
     pub is_required: bool,
     pub is_list: bool,
-    pub is_unique: bool,
-    pub is_auto_generated_int_id: bool,
     pub relation_name: String,
     pub relation_side: RelationSide,
     pub relation_info: RelationInfo,
 }
 
-#[derive(DebugStub, Clone)]
+#[derive(Clone)]
 pub struct RelationField {
     pub name: String,
-    pub is_id: bool,
     pub is_required: bool,
     pub is_list: bool,
-    pub is_auto_generated_int_id: bool,
     pub relation_name: String,
     pub relation_side: RelationSide,
     pub relation: OnceCell<RelationWeakRef>,
     pub relation_info: RelationInfo,
 
-    #[debug_stub = "#ModelWeakRef#"]
     pub model: ModelWeakRef,
-
-    pub(crate) is_unique: bool,
     pub(crate) fields: OnceCell<Vec<ScalarFieldWeak>>,
+}
+
+impl Debug for RelationField {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RelationField")
+            .field("name", &self.name)
+            .field("is_required", &self.is_required)
+            .field("is_list", &self.is_list)
+            .field("relation_name", &self.relation_name)
+            .field("relation_side", &self.relation_side)
+            .field("relation", &self.relation)
+            .field("relation_info", &self.relation_info)
+            .field("model", &"#ModelWeakRef#")
+            .field("fields", &self.fields)
+            .finish()
+    }
 }
 
 impl Eq for RelationField {}
@@ -51,10 +60,8 @@ impl Hash for RelationField {
         self.name.hash(state);
         self.is_required.hash(state);
         self.is_list.hash(state);
-        self.is_auto_generated_int_id.hash(state);
         self.relation_name.hash(state);
         self.relation_side.hash(state);
-        self.is_unique.hash(state);
         self.model().hash(state);
     }
 }
@@ -64,10 +71,8 @@ impl PartialEq for RelationField {
         self.name == other.name
             && self.is_required == other.is_required
             && self.is_list == other.is_list
-            && self.is_auto_generated_int_id == other.is_auto_generated_int_id
             && self.relation_name == other.relation_name
             && self.relation_side == other.relation_side
-            && self.is_unique == other.is_unique
             && self.model() == other.model()
     }
 }
@@ -99,11 +104,8 @@ impl RelationFieldTemplate {
     pub fn build(self, model: ModelWeakRef) -> RelationFieldRef {
         Arc::new(RelationField {
             name: self.name,
-            is_id: self.is_id,
             is_required: self.is_required,
             is_list: self.is_list,
-            is_auto_generated_int_id: self.is_auto_generated_int_id,
-            is_unique: self.is_unique,
             relation_name: self.relation_name,
             relation_side: self.relation_side,
             model,
@@ -138,10 +140,12 @@ impl RelationField {
                 .map(|field_name| {
                     fields
                         .find_from_all(field_name)
-                        .expect(&format!(
-                            "Invalid data model: To field {} can't be resolved on model {}",
-                            field_name, model.name
-                        ))
+                        .unwrap_or_else(|_| {
+                            panic!(
+                                "Invalid data model: To field {} can't be resolved on model {}",
+                                field_name, model.name
+                            )
+                        })
                         .clone()
                 })
                 .collect();
@@ -154,10 +158,6 @@ impl RelationField {
 
     pub fn is_optional(&self) -> bool {
         !self.is_required
-    }
-
-    pub fn is_unique(&self) -> bool {
-        self.is_unique
     }
 
     pub fn model(&self) -> ModelRef {
@@ -175,10 +175,12 @@ impl RelationField {
                 .fields
                 .iter()
                 .map(|f| {
-                    Arc::downgrade(&fields.find_from_scalar(f).expect(&format!(
-                        "Expected '{}' to be a scalar field on model '{}', found none.",
-                        f, model.name
-                    )))
+                    Arc::downgrade(&fields.find_from_scalar(f).unwrap_or_else(|_| {
+                        panic!(
+                            "Expected '{}' to be a scalar field on model '{}', found none.",
+                            f, model.name
+                        )
+                    }))
                 })
                 .collect()
         });

@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     query_graph::{Node, NodeRef, QueryGraph, QueryGraphDependency},
-    FilteredQuery, InputAssertions, ParsedInputMap, ParsedInputValue, Query, WriteQuery,
+    FilteredQuery, ParsedInputMap, ParsedInputValue, Query, WriteQuery,
 };
 use connector::{Filter, IdFilter};
 use itertools::Itertools;
@@ -27,10 +27,6 @@ pub fn nested_disconnect(
             .into_iter()
             .map(|value: ParsedInputValue| {
                 let value: ParsedInputMap = value.try_into()?;
-
-                value.assert_size(1)?;
-                value.assert_non_null()?;
-
                 extract_unique_filter(value, &child_model)
             })
             .collect::<QueryGraphBuilderResult<Vec<Filter>>>()?
@@ -58,10 +54,6 @@ pub fn nested_disconnect(
                     .into_iter()
                     .map(|value: ParsedInputValue| {
                         let value: ParsedInputMap = value.try_into()?;
-
-                        value.assert_size(1)?;
-                        value.assert_non_null()?;
-
                         extract_unique_filter(value, &child_model)
                     })
                     .collect::<QueryGraphBuilderResult<Vec<Filter>>>()?
@@ -112,7 +104,11 @@ fn handle_many_to_many(
     parent_relation_field: &RelationFieldRef,
     filter: Filter,
 ) -> QueryGraphBuilderResult<()> {
-    let expected_disconnects = std::cmp::max(filter.size(), 1);
+    let expected_disconnects = filter.size();
+
+    if expected_disconnects == 0 {
+        return Ok(());
+    }
     let find_child_records_node =
         utils::insert_find_children_by_parent_node(graph, parent_node, parent_relation_field, filter)?;
 
@@ -231,7 +227,7 @@ fn handle_one_to_x(
         QueryGraphDependency::ParentProjection(
             extractor_model_id,
             Box::new(move |mut update_node, links| {
-                if links.len() == 0 {
+                if links.is_empty() {
                     return Err(QueryGraphBuilderError::RecordsNotConnected {
                         relation_name,
                         parent_name,

@@ -2,7 +2,7 @@ use super::*;
 use crate::{
     query_ast::*,
     query_graph::{Node, NodeRef, QueryGraph, QueryGraphDependency},
-    InputAssertions, ParsedInputValue,
+    ParsedInputValue,
 };
 use connector::{Filter, RecordFilter};
 use prisma_models::{ModelRef, RelationFieldRef};
@@ -41,9 +41,6 @@ pub fn nested_update(
             let mut map: ParsedInputMap = value.try_into()?;
             let where_arg: ParsedInputMap = map.remove("where").unwrap().try_into()?;
 
-            where_arg.assert_size(1)?;
-            where_arg.assert_non_null()?;
-
             let filter = extract_unique_filter(where_arg, &child_model)?;
             let data_value = map.remove("data").unwrap();
 
@@ -68,9 +65,9 @@ pub fn nested_update(
                 Box::new(move |mut update_node, mut child_ids| {
                     let child_id = match child_ids.pop() {
                         Some(pid) => Ok(pid),
-                        None => Err(QueryGraphBuilderError::AssertionError(format!(
-                            "Expected a valid parent ID to be present for nested update to-one case."
-                        ))),
+                        None => Err(QueryGraphBuilderError::AssertionError(
+                            "Expected a valid parent ID to be present for nested update to-one case.".to_string(),
+                        )),
                     }?;
 
                     if let Node::Query(Query::Write(WriteQuery::UpdateRecord(ref mut ur))) = update_node {

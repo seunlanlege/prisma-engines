@@ -40,7 +40,7 @@ class DeleteManyRelationFilterSpec extends FlatSpec with Matchers with ApiSpecBa
 
   override def beforeEach(): Unit = database.truncateProjectTables(project)
 
-  "The delete many Mutation" should "delete the items matching the where relation filter" in {
+  "The delete many Mutation" should "delete the items matching the where relation filter" taggedAs (IgnoreMsSql) in {
     createTop("top1")
     createTop("top2")
 
@@ -61,8 +61,7 @@ class DeleteManyRelationFilterSpec extends FlatSpec with Matchers with ApiSpecBa
       project
     )
 
-    val filter = """{ bottom: null }"""
-
+    val filter            = """{ bottom: { is: null }}"""
     val firstCount        = topCount
     val filterQueryCount  = server.query(s"""{tops(where: $filter){id}}""", project).pathAsSeq("data.tops").length
     val filterDeleteCount = server.query(s"""mutation {deleteManyTops(where: $filter){count}}""".stripMargin, project).pathAsLong("data.deleteManyTops.count")
@@ -74,7 +73,7 @@ class DeleteManyRelationFilterSpec extends FlatSpec with Matchers with ApiSpecBa
     firstCount - filterDeleteCount should be(lastCount)
   }
 
-  "The delete many Mutation" should "delete all items if the filter is empty" in {
+  "The delete many Mutation" should "delete all items if the filter is empty" taggedAs (IgnoreMsSql) in {
     createTop("top1")
     createTop("top2")
 
@@ -106,7 +105,7 @@ class DeleteManyRelationFilterSpec extends FlatSpec with Matchers with ApiSpecBa
     firstCount - filterDeleteCount should be(lastCount)
   }
 
-  "The delete many Mutation" should "work for deeply nested filters" in {
+  "The delete many Mutation" should "work for deeply nested filters" taggedAs (IgnoreMsSql) in {
     createTop("top1")
     createTop("top2")
 
@@ -129,8 +128,7 @@ class DeleteManyRelationFilterSpec extends FlatSpec with Matchers with ApiSpecBa
       project
     )
 
-    val filter = """{ bottom: {veryBottom: {veryBottom: "veryBottom"}}}"""
-
+    val filter            = """{ bottom: { is: { veryBottom: { is: { veryBottom: { equals: "veryBottom" }}}}}}"""
     val firstCount        = topCount
     val filterQueryCount  = server.query(s"""{tops(where: $filter){id}}""", project).pathAsSeq("data.tops").length
     val filterDeleteCount = server.query(s"""mutation {deleteManyTops(where: $filter){count}}""".stripMargin, project).pathAsLong("data.deleteManyTops.count")
@@ -142,7 +140,7 @@ class DeleteManyRelationFilterSpec extends FlatSpec with Matchers with ApiSpecBa
     firstCount - filterDeleteCount should be(lastCount)
   }
 
-  "The delete many Mutation" should "work for named filters" in {
+  "The delete many Mutation" should "work for named filters" taggedAs (IgnoreMsSql) in {
     createTop("top1")
     createTop("top2")
 
@@ -154,7 +152,7 @@ class DeleteManyRelationFilterSpec extends FlatSpec with Matchers with ApiSpecBa
          |      bottom: {
          |        create: {
          |        bottom: "bottom1"
-         |        veryBottom: {create: {veryBottom: "veryBottom"}}}
+         |        veryBottom: { create: { veryBottom: "veryBottom" }}}
          |      }
          |    }
          |  ) {
@@ -165,8 +163,7 @@ class DeleteManyRelationFilterSpec extends FlatSpec with Matchers with ApiSpecBa
       project
     )
 
-    val filter = """{ bottom: {veryBottom: {veryBottom: "veryBottom"}}}"""
-
+    val filter            = """{ bottom: { is: { veryBottom: { is: { veryBottom: { equals: "veryBottom" }}}}}}"""
     val firstCount        = topCount
     val filterQueryCount  = server.query(s"""{tops(where: $filter){id}}""", project).pathAsSeq("data.tops").length
     val filterDeleteCount = server.query(s"""mutation {deleteManyTops(where: $filter){count}}""".stripMargin, project).pathAsLong("data.deleteManyTops.count")

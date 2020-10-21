@@ -19,7 +19,7 @@ pub trait UserFacingError: serde::Serialize {
     fn message(&self) -> String;
 }
 
-#[derive(Serialize, PartialEq, Debug)]
+#[derive(Serialize, Clone, PartialEq, Debug)]
 pub struct KnownError {
     pub message: String,
     pub meta: serde_json::Value,
@@ -27,12 +27,12 @@ pub struct KnownError {
 }
 
 impl KnownError {
-    pub fn new<T: UserFacingError>(inner: T) -> Result<KnownError, serde_json::Error> {
-        Ok(KnownError {
+    pub fn new<T: UserFacingError>(inner: T) -> KnownError {
+        KnownError {
             message: inner.message(),
-            meta: serde_json::to_value(&inner)?,
+            meta: serde_json::to_value(&inner).expect("Failed to render user facing error metadata to JSON"),
             error_code: T::ERROR_CODE,
-        })
+        }
     }
 }
 
@@ -103,6 +103,14 @@ impl Error {
         }
     }
 
+    /// Build from a KnownError
+    pub fn new_known(err: KnownError) -> Self {
+        Error {
+            inner: ErrorType::Known(err),
+            is_panic: false,
+        }
+    }
+
     pub fn from_panic_payload(panic_payload: &(dyn std::any::Any + Send + 'static)) -> Self {
         let message = Self::extract_panic_message(panic_payload).unwrap_or_else(|| "<unknown panic>".to_owned());
 
@@ -120,6 +128,14 @@ impl Error {
             .downcast_ref::<&str>()
             .map(|s| -> String { (*s).to_owned() })
             .or_else(|| panic_payload.downcast_ref::<String>().map(|s| s.to_owned()))
+    }
+
+    /// Extract the inner known error, or panic.
+    pub fn unwrap_known(self) -> KnownError {
+        match self.inner {
+            ErrorType::Known(err) => err,
+            err @ ErrorType::Unknown(_) => panic!("Expected known error, got {:?}", err),
+        }
     }
 }
 

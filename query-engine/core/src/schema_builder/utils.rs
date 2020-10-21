@@ -2,11 +2,11 @@ use super::*;
 use crate::EnumType;
 use itertools::Itertools;
 use once_cell::sync::OnceCell;
-use prisma_models::{dml, ModelRef, OrderBy};
+use prisma_models::{dml, ModelRef};
 use std::sync::Arc;
 
 /// Object type convenience wrapper function.
-pub fn object_type<T>(name: T, fields: Vec<Field>, model: Option<ModelRef>) -> ObjectType
+pub fn object_type<T>(name: T, fields: Vec<OutputField>, model: Option<ModelRef>) -> ObjectType
 where
     T: Into<String>,
 {
@@ -34,60 +34,58 @@ where
 {
     InputObjectType {
         name: name.into(),
+        constraints: InputObjectTypeConstraints::default(),
         fields: OnceCell::new(),
     }
 }
 
 /// Enum type convenience wrapper function.
-pub fn order_by_enum_type<T>(name: T, values: Vec<(String, OrderBy)>) -> EnumType
+pub fn string_enum_type<T>(name: T, values: Vec<String>) -> EnumType
 where
     T: Into<String>,
 {
-    EnumType::OrderBy(OrderByEnumType {
+    EnumType::String(StringEnumType {
         name: name.into(),
         values,
     })
 }
 
-/// Argument convenience wrapper function.
-pub fn argument<T>(name: T, arg_type: InputType, default_value: Option<dml::DefaultValue>) -> Argument
-where
-    T: Into<String>,
-{
-    Argument {
-        name: name.into(),
-        argument_type: arg_type,
-        default_value,
-    }
-}
-
 /// Field convenience wrapper function.
 pub fn field<T>(
     name: T,
-    arguments: Vec<Argument>,
+    arguments: Vec<InputField>,
     field_type: OutputType,
     query_builder: Option<SchemaQueryBuilder>,
-) -> Field
+) -> OutputField
 where
     T: Into<String>,
 {
-    Field {
+    OutputField {
         name: name.into(),
-        arguments,
+        arguments: arguments.into_iter().map(Arc::new).collect(),
         field_type: Arc::new(field_type),
         query_builder,
+        is_required: true,
     }
 }
 
 /// Field convenience wrapper function.
-pub fn input_field<T>(name: T, field_type: InputType, default_value: Option<dml::DefaultValue>) -> InputField
+pub fn input_field<T, S>(name: T, field_types: S, default_value: Option<dml::DefaultValue>) -> InputField
 where
     T: Into<String>,
+    S: Into<Vec<InputType>>,
 {
     InputField {
         name: name.into(),
-        field_type,
+        field_types: field_types.into(),
         default_value,
+        is_required: true,
+    }
+}
+
+impl Into<Vec<InputType>> for InputType {
+    fn into(self) -> Vec<InputType> {
+        vec![self]
     }
 }
 
@@ -131,7 +129,7 @@ where
 
 /// Appends an option of type T to a vector over T if the option is Some.
 pub fn append_opt<T>(vec: &mut Vec<T>, opt: Option<T>) {
-    opt.into_iter().for_each(|t| vec.push(t));
+    vec.extend(opt.into_iter())
 }
 
 /// Computes a compound field name based on an index.
@@ -150,5 +148,5 @@ where
     T: AsRef<str>,
 {
     // Extremely sophisticated.
-    field_names.into_iter().map(AsRef::as_ref).join("_")
+    field_names.iter().map(AsRef::as_ref).join("_")
 }

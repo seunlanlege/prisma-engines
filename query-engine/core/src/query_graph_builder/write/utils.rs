@@ -3,7 +3,7 @@ use crate::{
     query_graph::{Flow, Node, NodeRef, QueryGraph, QueryGraphDependency},
     ParsedInputValue, QueryGraphBuilderError, QueryGraphBuilderResult,
 };
-use connector::{Filter, QueryArguments, WriteArgs};
+use connector::{Filter, WriteArgs};
 use itertools::Itertools;
 use prisma_models::{ModelProjection, ModelRef, RelationFieldRef};
 use std::sync::Arc;
@@ -19,10 +19,10 @@ pub fn coerce_vec(val: ParsedInputValue) -> Vec<ParsedInputValue> {
 }
 
 pub fn node_is_create(graph: &QueryGraph, node: &NodeRef) -> bool {
-    match graph.node_content(node).unwrap() {
-        Node::Query(Query::Write(WriteQuery::CreateRecord(_))) => true,
-        _ => false,
-    }
+    matches!(
+        graph.node_content(node).unwrap(),
+        Node::Query(Query::Write(WriteQuery::CreateRecord(_)))
+    )
 }
 
 /// Produces a non-failing read query that fetches the requested projection of records for a given filterable.
@@ -36,8 +36,8 @@ where
     let read_query = ReadQuery::ManyRecordsQuery(ManyRecordsQuery {
         name: "read_ids_infallible".into(), // this name only eases debugging
         alias: None,
-        model,
-        args: filter.into(),
+        model: model.clone(),
+        args: (model, filter).into(),
         selected_fields,
         nested: vec![],
         selection_order: vec![],
@@ -93,11 +93,12 @@ pub fn insert_find_children_by_parent_node<T>(
     filter: T,
 ) -> QueryGraphBuilderResult<NodeRef>
 where
-    T: Into<QueryArguments>,
+    T: Into<Filter>,
 {
     let parent_model_id = parent_relation_field.model().primary_identifier();
     let parent_linking_fields = parent_relation_field.linking_fields();
     let projection = parent_model_id.merge(parent_linking_fields);
+    let child_model = parent_relation_field.related_model();
 
     let selected_fields = get_selected_fields(
         &parent_relation_field.related_model(),
@@ -109,7 +110,7 @@ where
         alias: None,
         parent_field: Arc::clone(parent_relation_field),
         parent_projections: None,
-        args: filter.into(),
+        args: (child_model, filter).into(),
         selected_fields,
         nested: vec![],
         selection_order: vec![],
@@ -218,7 +219,7 @@ pub fn insert_existing_1to1_related_model_checks(
             Box::new(move |if_node, child_ids| {
                 // If the other side ("child") requires the connection, we need to make sure that there isn't a child already connected
                 // to the parent, as that would violate the other childs relation side.
-                if child_ids.len() > 0 && child_side_required {
+                if !child_ids.is_empty() && child_side_required {
                     return Err(QueryGraphBuilderError::RelationViolation(rf.into()));
                 }
 
@@ -238,11 +239,11 @@ pub fn insert_existing_1to1_related_model_checks(
     graph.create_edge(
         &read_existing_children,
         &update_existing_child,
-        QueryGraphDependency::ParentProjection(child_model_identifier.clone(), Box::new(move |mut update_existing_child, mut child_ids| {
+        QueryGraphDependency::ParentProjection(child_model_identifier, Box::new(move |mut update_existing_child, mut child_ids| {
             // This has to succeed or the if-then node wouldn't trigger.
             let child_id = match child_ids.pop() {
                 Some(pid) => Ok(pid),
-                None => Err(QueryGraphBuilderError::AssertionError(format!("[Query Graph] Expected a valid parent ID to be present for a nested connect on a one-to-one relation, updating previous parent."))),
+                None => Err(QueryGraphBuilderError::AssertionError("[Query Graph] Expected a valid parent ID to be present for a nested connect on a one-to-one relation, updating previous parent.".to_string())),
             }?;
 
             if let Node::Query(Query::Write(ref mut wq)) = update_existing_child {
@@ -309,7 +310,7 @@ pub fn insert_deletion_checks(
     let relation_fields = internal_model.fields_requiring_model(model);
     let mut check_nodes = vec![];
 
-    if relation_fields.len() > 0 {
+    if !relation_fields.is_empty() {
         let noop_node = graph.create_node(Node::Empty);
 
         // We know that the relation can't be a list and must be required on the related model for `model` (see fields_requiring_model).

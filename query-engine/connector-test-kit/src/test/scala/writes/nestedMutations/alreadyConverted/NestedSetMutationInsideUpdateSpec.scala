@@ -20,7 +20,7 @@ class NestedSetMutationInsideUpdateSpec extends FlatSpec with Matchers with ApiS
           |  createParent(data: {
           |    p: "p1", p_1: "p", p_2: "1"
           |    childrenOpt: {
-          |      create: [{c: "c1"}, {c: "c2"}]
+          |      create: [{c: "c1", c_1: "c1", c_2: "c2"}, {c: "c2", c_1: "c3", c_2: "c4"}]
           |    }
           |  }){
           |    ${t.parent.selection}
@@ -36,7 +36,7 @@ class NestedSetMutationInsideUpdateSpec extends FlatSpec with Matchers with ApiS
       val parentResult2 = server
         .query(
           s"""mutation {
-          |  createParent(data: {p: "p2", p_1: "p", p_2: "2"}){
+          |  createParent(data: {p: "p2", p_1: "wqe", p_2: "qt12t"}){
           |    p
           |    ${t.parent.selection}
           |  }
@@ -282,7 +282,7 @@ class NestedSetMutationInsideUpdateSpec extends FlatSpec with Matchers with ApiS
         |  createParent(data: {
         |    p: "p2", p_1: "p", p_2: "2"
         |    childrenOpt: {
-        |      create: [{c: "c3"},{c: "c4"}]
+        |      create: [{c: "c3", c_1: "u", c_2: "w"},{c: "c4", c_1: "g", c_2: "l"}]
         |    }
         |  }){
         |    ${t.parent.selection}
@@ -314,7 +314,7 @@ class NestedSetMutationInsideUpdateSpec extends FlatSpec with Matchers with ApiS
 
       res.toString should be("""{"data":{"updateParent":{"childrenOpt":[]}}}""")
 
-      server.query(s"""query{children(orderBy: c_ASC){c, parentsOpt{p}}}""", project).toString should be(
+      server.query(s"""query{children(orderBy: { c: asc }){c, parentsOpt{p}}}""", project).toString should be(
         """{"data":{"children":[{"c":"c1","parentsOpt":[{"p":"p1"}]},{"c":"c2","parentsOpt":[{"p":"p1"}]},{"c":"c3","parentsOpt":[]},{"c":"c4","parentsOpt":[]}]}}""")
 
     }
@@ -459,7 +459,7 @@ class NestedSetMutationInsideUpdateSpec extends FlatSpec with Matchers with ApiS
       s"""model Child {
         | id      String   @id @default(cuid())
         | c       String   @unique
-        | parents Parent[] $relationInlineDirective
+        | parents Parent[] $relationInlineAttribute
         |}
         |
         |model Parent {
@@ -543,7 +543,7 @@ class NestedSetMutationInsideUpdateSpec extends FlatSpec with Matchers with ApiS
       s"""
         |model Post {
         |  id      String  @id @default(cuid())
-        |  authors AUser[] $relationInlineDirective
+        |  authors AUser[] $relationInlineAttribute
         |  title   String  @unique
         |}
         |

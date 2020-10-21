@@ -6,7 +6,6 @@ pub use scalar::*;
 
 use crate::prelude::*;
 use datamodel::ScalarType;
-use prisma_value::TypeHint;
 use std::{hash::Hash, sync::Arc};
 
 #[derive(Debug)]
@@ -69,21 +68,6 @@ pub enum TypeIdentifier {
     Int,
 }
 
-impl From<TypeIdentifier> for TypeHint {
-    fn from(typ: TypeIdentifier) -> Self {
-        match typ {
-            TypeIdentifier::String => TypeHint::String,
-            TypeIdentifier::Float => TypeHint::Float,
-            TypeIdentifier::Boolean => TypeHint::Boolean,
-            TypeIdentifier::Enum(_) => TypeHint::Enum,
-            TypeIdentifier::Json => TypeHint::Json,
-            TypeIdentifier::DateTime => TypeHint::DateTime,
-            TypeIdentifier::UUID => TypeHint::UUID,
-            TypeIdentifier::Int => TypeHint::Int,
-        }
-    }
-}
-
 impl Field {
     pub fn name(&self) -> &str {
         match self {
@@ -102,7 +86,7 @@ impl Field {
     pub fn is_id(&self) -> bool {
         match self {
             Field::Scalar(sf) => sf.is_id,
-            Field::Relation(rf) => rf.is_id,
+            Field::Relation(_) => false,
         }
     }
 
@@ -130,7 +114,7 @@ impl Field {
     pub fn is_unique(&self) -> bool {
         match self {
             Field::Scalar(ref sf) => sf.unique(),
-            Field::Relation(ref rf) => rf.is_id || rf.is_unique,
+            Field::Relation(_) => false,
         }
     }
 
@@ -186,6 +170,8 @@ impl From<ScalarType> for TypeIdentifier {
             ScalarType::Boolean => Self::Boolean,
             ScalarType::DateTime => Self::DateTime,
             ScalarType::Json => Self::Json,
+            ScalarType::Decimal => Self::Float,
+            _ => todo!(),
         }
     }
 }

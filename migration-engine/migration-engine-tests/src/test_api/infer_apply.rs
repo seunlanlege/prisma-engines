@@ -2,6 +2,7 @@ use super::super::{assertions::AssertionResult, unique_migration_id};
 use migration_core::{
     api::GenericApi,
     commands::{ApplyMigrationInput, InferMigrationStepsInput, MigrationStepsResultOutput},
+    CoreError, CoreResult,
 };
 use std::borrow::Cow;
 
@@ -40,11 +41,10 @@ impl<'a> InferApply<'a> {
     }
 
     pub async fn send_user_facing(self) -> Result<MigrationStepsResultOutput, user_facing_errors::Error> {
-        let api = self.api;
-        self.send_inner().await.map_err(|err| api.render_error(err))
+        self.send_inner().await.map_err(CoreError::render_user_facing)
     }
 
-    pub async fn send_inner(self) -> Result<MigrationStepsResultOutput, migration_core::error::Error> {
+    pub async fn send_inner(self) -> CoreResult<MigrationStepsResultOutput> {
         let migration_id = self.migration_id.map(Into::into).unwrap_or_else(unique_migration_id);
 
         let input = InferMigrationStepsInput {
@@ -74,6 +74,7 @@ pub struct InferApplyAssertion<'a> {
 }
 
 impl<'a> InferApplyAssertion<'a> {
+    /// Asserts that the command produced no warning, no error, and no unexecutable migration message.
     pub fn assert_green(self) -> AssertionResult<Self> {
         self.assert_no_warning()?.assert_no_error()?.assert_executable()
     }
@@ -89,15 +90,22 @@ impl<'a> InferApplyAssertion<'a> {
     }
 
     pub fn assert_warnings(self, warnings: &[Cow<'_, str>]) -> AssertionResult<Self> {
-        for (idx, warning) in warnings.iter().enumerate() {
-            assert_eq!(
-                Some(warning.as_ref()),
-                self.result
-                    .warnings
-                    .get(idx)
-                    .map(|warning| warning.description.as_str())
-            );
-        }
+        anyhow::ensure!(
+            self.result.warnings.len() == warnings.len(),
+            "Expected {} warnings, got {}.\n{:#?}",
+            warnings.len(),
+            self.result.warnings.len(),
+            self.result.warnings
+        );
+
+        let descriptions: Vec<Cow<'_, str>> = self
+            .result
+            .warnings
+            .iter()
+            .map(|warning| warning.description.as_str().into())
+            .collect();
+
+        assert_eq!(&descriptions, &warnings);
 
         Ok(self)
     }

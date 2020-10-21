@@ -34,14 +34,14 @@ class InsertingNullInRequiredFieldsSpec extends FlatSpec with Matchers with ApiS
             |  updateA(
             |    where: { b: "abc" }
             |    data: {
-            |      key: null
+            |      key: { set: null }
             |    }) {
             |    id
             |  }
             |}""",
         project,
-        errorCode = 2012,
-        errorContains = "Missing a required value at `Mutation.updateA.data.AUpdateInput.key`"
+        errorCode = 2009,
+        errorContains = "`Mutation.updateA.data.AUpdateInput.key.StringFieldUpdateOperationsInput.set`: A value is required but not set."
       )
     }
   }
@@ -100,7 +100,7 @@ class InsertingNullInRequiredFieldsSpec extends FlatSpec with Matchers with ApiS
         |  updateA(
         |    where: { b: "abc" }
         |    data: {
-        |      key: null
+        |      key: { set: null }
         |    }) {
         |    id
         |  }

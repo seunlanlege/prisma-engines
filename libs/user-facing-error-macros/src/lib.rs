@@ -33,10 +33,6 @@ fn user_error_derive_on_struct(input: &DeriveInput) -> TokenStream {
     let message_template = input.message;
     let template_variables = message_template_variables(message_template.value().as_str(), &message_template.span());
 
-    // Transform from the spec string templates with `${var}` to a rust format string we can use
-    // with `format!()`.
-    let message_template = message_template.value().replace("${", "{");
-
     let template_variables = template_variables.iter();
 
     let output = quote! {
@@ -89,7 +85,7 @@ fn user_error_derive_on_enum(input: &DeriveInput, data: &syn::DataEnum) -> Token
 fn enum_variant_match_branch(enum_ident: &syn::Ident, variant: &syn::Variant) -> impl quote::ToTokens {
     let parsed_variant = match UserErrorEnumVariantAttributes::from_variant(variant) {
         Ok(parsed_variant) => parsed_variant,
-        Err(err) => return err.write_errors().into(),
+        Err(err) => return err.write_errors(),
     };
 
     let variant_ident = &parsed_variant.ident;
@@ -104,7 +100,6 @@ fn enum_variant_match_branch(enum_ident: &syn::Ident, variant: &syn::Variant) ->
         tokens => {
             return syn::Error::new_spanned(tokens, "Enum variant fields of user facing errors must be named.")
                 .to_compile_error()
-                .into()
         }
     };
 
@@ -147,7 +142,7 @@ struct UserErrorDeriveInput {
 
 /// See MESSAGE_VARIABLE_REGEX
 const MESSAGE_VARIABLE_REGEX_PATTERN: &str = r##"(?x)
-    \$\{  # A curly brace preceded by a dollar sign
+    \{  # an opening curly brace
     (
         [a-zA-Z0-9_]+  # any number of alphanumeric characters and underscores
     )
@@ -163,7 +158,7 @@ fn message_template_variables(template: &str, span: &Span) -> BTreeSet<Ident> {
     captures
         // The unwrap is safe because we know this regex has one capture group.
         .map(|capture| capture.get(1).unwrap())
-        .map(|m| Ident::new(m.as_str(), span.clone()))
+        .map(|m| Ident::new(m.as_str(), *span))
         .collect()
 }
 

@@ -1,5 +1,5 @@
 use super::*;
-use crate::error::DatamodelError;
+use crate::diagnostics::DatamodelError;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Identifier {
@@ -19,17 +19,17 @@ impl Identifier {
         if self.name.is_empty() {
             Err(DatamodelError::new_validation_error(
                 &format!("The name of a {} must not be empty.", schema_item),
-                self.span.clone(),
+                self.span,
             ))
         } else if self.name.chars().next().unwrap().is_numeric() {
             Err(DatamodelError::new_validation_error(
                 &format!("The name of a {} must not start with a number.", schema_item),
-                self.span.clone(),
+                self.span,
             ))
-        } else if self.name.contains("-") {
+        } else if self.name.contains('-') {
             Err(DatamodelError::new_validation_error(
                 &format!("The character `-` is not allowed in {} names.", schema_item),
-                self.span.clone(),
+                self.span,
             ))
         } else {
             Ok(())

@@ -1,18 +1,18 @@
 use super::*;
 
-pub struct DMMFEnumRenderer<'a> {
-    enum_type: &'a EnumType,
+pub struct DmmfEnumRenderer {
+    enum_type: EnumType,
 }
 
-impl<'a> Renderer<'a, ()> for DMMFEnumRenderer<'a> {
-    fn render(&self, ctx: &RenderContext) {
+impl Renderer for DmmfEnumRenderer {
+    fn render(&self, ctx: &mut RenderContext) {
         if ctx.already_rendered(self.enum_type.name()) {
             return;
         }
 
         let values = self.format_enum_values();
 
-        let rendered = DMMFEnum {
+        let rendered = DmmfEnum {
             name: self.enum_type.name().to_owned(),
             values,
         };
@@ -21,15 +21,18 @@ impl<'a> Renderer<'a, ()> for DMMFEnumRenderer<'a> {
     }
 }
 
-impl<'a> DMMFEnumRenderer<'a> {
-    pub fn new(enum_type: &'a EnumType) -> DMMFEnumRenderer<'a> {
-        DMMFEnumRenderer { enum_type }
+impl DmmfEnumRenderer {
+    pub fn new(enum_type: &EnumType) -> DmmfEnumRenderer {
+        DmmfEnumRenderer {
+            enum_type: enum_type.clone(),
+        }
     }
 
     fn format_enum_values(&self) -> Vec<String> {
-        match self.enum_type {
+        match &self.enum_type {
+            EnumType::String(s) => s.values().to_owned(),
             EnumType::Internal(i) => i.external_values(),
-            EnumType::OrderBy(ord) => ord.values(),
+            EnumType::FieldRef(f) => f.values(),
         }
     }
 }

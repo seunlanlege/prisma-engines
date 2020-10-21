@@ -6,7 +6,7 @@ use connector_interface::{
     error::{ConnectorError, ErrorKind},
     Connection, Connector,
 };
-use datamodel::Source;
+use datamodel::Datasource;
 use quaint::{pooled::Quaint, prelude::ConnectionInfo};
 use std::time::Duration;
 
@@ -17,7 +17,7 @@ pub struct Mssql {
 
 #[async_trait]
 impl FromSource for Mssql {
-    async fn from_source(source: &dyn Source) -> connector_interface::Result<Self> {
+    async fn from_source(source: &Datasource) -> connector_interface::Result<Self> {
         let connection_info = ConnectionInfo::from_url(&source.url().value)
             .map_err(|err| ConnectorError::from_kind(ErrorKind::ConnectionError(err.into())))?;
 
@@ -46,5 +46,9 @@ impl Connector for Mssql {
             Ok(Box::new(conn) as Box<dyn Connection>)
         })
         .await
+    }
+
+    fn name(&self) -> String {
+        "mssql".to_owned()
     }
 }

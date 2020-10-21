@@ -1,6 +1,7 @@
 use super::QueryValue;
+use indexmap::IndexMap;
 use itertools::Itertools;
-use std::{borrow::Cow, collections::BTreeMap};
+use std::borrow::Cow;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct SelectionBuilder {
@@ -178,17 +179,11 @@ impl<'a> SelectionSet<'a> {
     }
 
     pub fn is_single(&self) -> bool {
-        match self {
-            Self::Single(_, _) => true,
-            _ => false,
-        }
+        matches!(self, Self::Single(_, _))
     }
 
     pub fn is_multi(&self) -> bool {
-        match self {
-            Self::Multi(_, _) => true,
-            _ => false,
-        }
+        matches!(self, Self::Multi(_, _))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -228,7 +223,7 @@ impl<'a> From<In<'a>> for QueryValue {
                         .into_iter()
                         .zip(vals.into_iter())
                         .fold(Conjuctive::new(), |acc, (key, val)| {
-                            let mut argument = BTreeMap::new();
+                            let mut argument = IndexMap::new();
                             argument.insert(key.into_owned(), val);
 
                             acc.and(argument)
@@ -240,8 +235,11 @@ impl<'a> From<In<'a>> for QueryValue {
                 QueryValue::from(conjuctive)
             }
             SelectionSet::Single(key, vals) => {
-                let mut argument = BTreeMap::new();
-                argument.insert(format!("{}_in", key), QueryValue::List(vals));
+                let mut argument = IndexMap::new();
+                argument.insert(
+                    key.to_string(),
+                    QueryValue::Object(vec![("in".to_owned(), QueryValue::List(vals))].into_iter().collect()),
+                );
 
                 QueryValue::Object(argument)
             }
@@ -254,12 +252,12 @@ impl<'a> From<In<'a>> for QueryValue {
 pub enum Conjuctive {
     Or(Vec<Conjuctive>),
     And(Vec<Conjuctive>),
-    Single(BTreeMap<String, QueryValue>),
+    Single(IndexMap<String, QueryValue>),
     None,
 }
 
-impl From<BTreeMap<String, QueryValue>> for Conjuctive {
-    fn from(map: BTreeMap<String, QueryValue>) -> Self {
+impl From<IndexMap<String, QueryValue>> for Conjuctive {
+    fn from(map: IndexMap<String, QueryValue>) -> Self {
         Self::Single(map)
     }
 }
@@ -302,11 +300,11 @@ impl From<Conjuctive> for QueryValue {
     fn from(conjuctive: Conjuctive) -> Self {
         match conjuctive {
             Conjuctive::None => Self::Null,
-            Conjuctive::Single(obj) => QueryValue::Object(obj),
+            Conjuctive::Single(obj) => QueryValue::Object(single_to_multi_filter(obj)), // QueryValue::Object(obj),
             Conjuctive::Or(conjuctives) => {
                 let conditions: Vec<QueryValue> = conjuctives.into_iter().map(QueryValue::from).collect();
 
-                let mut map = BTreeMap::new();
+                let mut map = IndexMap::new();
                 map.insert("OR".to_string(), QueryValue::List(conditions));
 
                 QueryValue::Object(map)
@@ -314,11 +312,23 @@ impl From<Conjuctive> for QueryValue {
             Conjuctive::And(conjuctives) => {
                 let conditions: Vec<QueryValue> = conjuctives.into_iter().map(QueryValue::from).collect();
 
-                let mut map = BTreeMap::new();
+                let mut map = IndexMap::new();
                 map.insert("AND".to_string(), QueryValue::List(conditions));
 
                 QueryValue::Object(map)
             }
         }
     }
+}
+
+/// Syntax for single-record and multi-record queries
+fn single_to_multi_filter(obj: IndexMap<String, QueryValue>) -> IndexMap<String, QueryValue> {
+    let mut new_obj = IndexMap::new();
+
+    for (key, value) in obj {
+        let equality_obj = vec![("equals".to_owned(), value)].into_iter().collect();
+        new_obj.insert(key, QueryValue::Object(equality_obj));
+    }
+
+    new_obj
 }

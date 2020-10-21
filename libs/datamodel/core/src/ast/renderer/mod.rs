@@ -3,6 +3,8 @@ mod table;
 
 use crate::ast;
 
+use crate::ast::helper::get_sort_index_of_attribute;
+use crate::ast::Attribute;
 pub use string_builder::StringBuilder;
 pub use table::TableFormat;
 
@@ -73,6 +75,7 @@ impl<'a> Renderer<'a> {
                 }
             };
         }
+        writeln!(self.stream).expect("Writer error.");
     }
 
     fn render_documentation(target: &mut dyn LineWriteable, obj: &dyn ast::WithDocumentation) {
@@ -150,11 +153,12 @@ impl<'a> Renderer<'a> {
         target.write(&field.field_type.name);
 
         // Attributes
-        if !field.directives.is_empty() {
+        if !field.attributes.is_empty() {
             let mut attributes_builder = StringBuilder::new();
 
-            for directive in &field.directives {
-                Self::render_field_directive(&mut attributes_builder, &directive);
+            let attributes = Self::sort_attributes(field.attributes.clone(), true);
+            for attribute in attributes {
+                Self::render_field_attribute(&mut attributes_builder, &attribute);
             }
 
             target.write(&attributes_builder.to_string());
@@ -186,16 +190,28 @@ impl<'a> Renderer<'a> {
 
         field_formatter.render(self);
 
-        if !model.directives.is_empty() {
+        if !model.attributes.is_empty() {
             self.end_line();
-            for directive in &model.directives {
-                self.render_block_directive(&directive, comment_out.clone());
+            // sort attributes
+            let attributes = Self::sort_attributes(model.attributes.clone(), false);
+            for attribute in attributes {
+                self.render_block_attribute(&attribute, comment_out.clone());
             }
         }
 
         self.indent_down();
-        self.write(format!("{}{}", comment_out.clone(), "}").as_ref());
+        self.write(format!("{}{}", comment_out, "}").as_ref());
         self.end_line();
+    }
+
+    fn sort_attributes(mut attributes: Vec<Attribute>, is_field_attribute: bool) -> Vec<Attribute> {
+        // sort attributes
+        attributes.sort_by(|a, b| {
+            let sort_index_a = get_sort_index_of_attribute(is_field_attribute, a.name.name.as_str());
+            let sort_index_b = get_sort_index_of_attribute(is_field_attribute, b.name.name.as_str());
+            sort_index_a.cmp(&sort_index_b)
+        });
+        attributes
     }
 
     fn render_enum(&mut self, enm: &ast::Enum) {
@@ -216,12 +232,12 @@ impl<'a> Renderer<'a> {
                 "".to_string()
             };
             self.write(format!("{}{}", commented_out, &value.name.name).as_str());
-            if !value.directives.is_empty() {
+            if !value.attributes.is_empty() {
                 let mut attributes_builder = StringBuilder::new();
 
-                for directive in &value.directives {
+                for attribute in &value.attributes {
                     attributes_builder.write(&" ");
-                    Self::render_field_directive(&mut attributes_builder, &directive);
+                    Self::render_field_attribute(&mut attributes_builder, &attribute);
                 }
 
                 self.write(&attributes_builder.to_string());
@@ -234,11 +250,12 @@ impl<'a> Renderer<'a> {
             self.end_line();
         }
 
-        if !enm.directives.is_empty() {
+        if !enm.attributes.is_empty() {
             self.end_line();
-            for directive in &enm.directives {
+            let attributes = Self::sort_attributes(enm.attributes.clone(), false);
+            for attribute in attributes {
                 self.write(" ");
-                self.render_block_directive(&directive, "".to_string());
+                self.render_block_attribute(&attribute, "".to_string());
             }
         }
 
@@ -269,12 +286,13 @@ impl<'a> Renderer<'a> {
         }
 
         // Attributes
-        if !field.directives.is_empty() {
+        if !field.attributes.is_empty() {
             let mut attributes_builder = StringBuilder::new();
 
-            for directive in &field.directives {
+            let attributes = Self::sort_attributes(field.attributes.clone(), true);
+            for attribute in attributes {
                 attributes_builder.write(&" ");
-                Self::render_field_directive(&mut attributes_builder, &directive);
+                Self::render_field_attribute(&mut attributes_builder, &attribute);
             }
 
             target.write(&attributes_builder.to_string());
@@ -291,24 +309,24 @@ impl<'a> Renderer<'a> {
         };
     }
 
-    fn render_field_directive(target: &mut dyn LineWriteable, directive: &ast::Directive) {
+    pub fn render_field_attribute(target: &mut dyn LineWriteable, attribute: &ast::Attribute) {
         target.write("@");
-        target.write(&directive.name.name);
+        target.write(&attribute.name.name);
 
-        if !directive.arguments.is_empty() {
+        if !attribute.arguments.is_empty() {
             target.write("(");
-            Self::render_arguments(target, &directive.arguments);
+            Self::render_arguments(target, &attribute.arguments);
             target.write(")");
         }
     }
 
-    fn render_block_directive(&mut self, directive: &ast::Directive, commented_out: String) {
+    fn render_block_attribute(&mut self, attribute: &ast::Attribute, commented_out: String) {
         self.write(format!("{}@@", commented_out).as_ref());
-        self.write(&directive.name.name);
+        self.write(&attribute.name.name);
 
-        if !directive.arguments.is_empty() {
+        if !attribute.arguments.is_empty() {
             self.write("(");
-            Self::render_arguments(self, &directive.arguments);
+            Self::render_arguments(self, &attribute.arguments);
             self.write(")");
         }
 

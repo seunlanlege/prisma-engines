@@ -8,7 +8,7 @@ import util._
 
 class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with ApiSpecBase with SchemaBaseV11 {
   override def runOnlyForCapabilities = Set(JoinRelationLinksCapability)
-  lazy val isMySQL = connectorTag == ConnectorTag.MySqlConnectorTag
+  lazy val isMySQL                    = connectorTag == ConnectorTag.MySqlConnectorTag
 
   "a PM to C1!  relation with a child already in a relation" should "work with create" in {
     schemaWithRelation(onParent = ChildList, onChild = ParentReq).test { t =>
@@ -22,7 +22,7 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
         |  createParent(data: {
         |    p: "p1", p_1: "p", p_2: "1"
         |    childrenOpt: {
-        |      create: {c: "c1"}
+        |      create: {c: "c1", c_1: "foo", c_2: "bar"}
         |    }
         |  }){
         |    ${t.parent.selection}
@@ -44,8 +44,8 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
          |      childrenOpt: {
          |        upsert: {
          |          where: {c: "DOES NOT EXIST"}
-         |          update: {c: "DOES NOT MATTER"}
-         |          create :{c: "c2"}
+         |          update: {c: { set: "DOES NOT MATTER" }}
+         |          create :{c: "c2", c_1: "asdf", c_2: "lol"}
          |        }
          |      }
          |   }
@@ -76,7 +76,7 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
         |  createParent(data: {
         |    p: "p1", p_1: "p", p_2: "1"
         |    childrenOpt: {
-        |      create: {c: "c1"}
+        |      create: {c: "c1", c_1: "foo", c_2: "bar"}
         |    }
         |  }){
         |    ${t.parent.selection}
@@ -97,8 +97,8 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
          |    data:{
          |    childrenOpt: {upsert: {
          |    where: {c: "c1"}
-         |    update: {c: "updated C"}
-         |    create :{c: "DOES NOT MATTER"}
+         |    update: {c: { set: "updated C" }}
+         |    create :{c: "DOES NOT MATTER", c_1: "foo", c_2: "bar"}
          |    }}
          |  }){
          |    childrenOpt {
@@ -128,7 +128,7 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
           |  createParent(data: {
           |    p: "p1", p_1: "p", p_2: "1"
           |    childrenOpt: {
-          |      create: [{c: "c1"}, {c: "c2"}]
+          |      create: [{c: "c1", c_1: "foo", c_2: "bar"}, {c: "c2", c_1: "juuh", c_2: "lol"}]
           |    }
           |  }){
           |    ${t.parent.selection}
@@ -149,8 +149,8 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
          |  data:{
          |    childrenOpt: {upsert: [{
          |    where: {c: "DOES NOT EXIST"}
-         |    update: {c: "DOES NOT MATTER"}
-         |    create :{c: "new C"}
+         |    update: {c: {set: "DOES NOT MATTER"}}
+         |    create :{c: "new C", c_1: "omg", c_2: "lolz"}
          |    }]}
          |  }){
          |    childrenOpt {
@@ -180,7 +180,7 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
           |  createParent(data: {
           |    p: "p1", p_1: "p", p_2: "1"
           |    childrenOpt: {
-          |      create: [{c: "c1"}, {c: "c2"}]
+          |      create: [{c: "c1", c_1: "a", c_2: "b"}, {c: "c2", c_1: "a2", c_2: "b2"}]
           |    }
           |  }){
           |    ${t.parent.selection}
@@ -201,11 +201,11 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
          |  data:{
          |    childrenOpt: {upsert: [{
          |    where: {c: "c1"}
-         |    update: {c: "updated C"}
-         |    create :{c: "DOES NOT MATTER"}
+         |    update: {c: {set:"updated C"}}
+         |    create :{c: "DOES NOT MATTER", c_1: "DOES NOT MATTER", c_2: "DOES NOT MATTER"}
          |    }]}
          |  }){
-         |    childrenOpt (orderBy: c_ASC){
+         |    childrenOpt (orderBy: { c: asc }){
          |      c
          |    }
          |  }
@@ -231,7 +231,7 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
         |  createParent(data: {
         |    p: "p1", p_1: "p", p_2: "1"
         |    childrenOpt: {
-        |      create: [{c: "c1"},{c: "c2"}]
+        |      create: [{c: "c1", c_1: "foo", c_2: "bar"},{c: "c2", c_1: "buu", c_2: "quu"}]
         |    }
         |  }){
         |    ${t.parent.selection}
@@ -253,8 +253,8 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
          |      childrenOpt: {
          |        upsert: [{
          |          where:  {c: "c2"}
-         |          update: {c: "updated C"}
-         |          create: {c: "DOES NOT MATTER"}
+         |          update: {c: {set: "updated C"}}
+         |          create: {c: "DOES NOT MATTER", c_1: "foo", c_2: "bar"}
          |        }]
          |      }
          |  }){
@@ -287,7 +287,7 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
         |  createParent(data: {
         |    p: "p1", p_1: "p", p_2: "1"
         |    childrenOpt: {
-        |      create: [{c: "c1"},{c: "c2"}]
+        |      create: [{c: "c1", c_1: "foo", c_2: "bar"},{c: "c2", c_1: "puu", c_2: "quu"}]
         |    }
         |  }){
         |    ${t.parent.selection}
@@ -308,8 +308,8 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
          |  data:{
          |    childrenOpt: {upsert: [{
          |      where: {c: "DOES NOT EXIST"}
-         |      update: {c: "DOES NOT MATTER"}
-         |      create :{c: "updated C"}
+         |      update: {c: {set: "DOES NOT MATTER"}}
+         |      create :{c: "updated C", c_1: "lolz", c_2: "miau"}
          |    }]}
          |  }){
          |    childrenOpt{
@@ -338,7 +338,7 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
 
                         model Todo{
                             id       String    @id @default(cuid())
-                            comments Comment[] $relationInlineDirective
+                            comments Comment[] $relationInlineAttribute
                         }"""
 
     val project = SchemaDsl.fromStringV11() { schema }
@@ -354,7 +354,7 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
         |    }
         |  ){
         |    id
-        |    comments (orderBy: id_ASC){ id }
+        |    comments (orderBy: { id: asc }){ id }
         |  }
         |}""",
       project
@@ -372,13 +372,13 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
          |    data:{
          |      comments: {
          |        upsert: [
-         |          {where: {id: "$comment1Id"}, update: {text: "update comment1"}, create: {text: "irrelevant"}},
-         |          {where: {id: "5beea4aa6183dd734b2dbd9b"}, update: {text: "irrelevant"}, create: {text: "new comment3"}},
+         |          {where: {id: "$comment1Id"}, update: {text: {set: "update comment1"}}, create: {text: "irrelevant"}},
+         |          {where: {id: "5beea4aa6183dd734b2dbd9b"}, update: {text: {set: "irrelevant"}}, create: {text: "new comment3"}},
          |        ]
          |      }
          |    }
          |  ){
-         |    comments (orderBy: id_ASC){
+         |    comments (orderBy: { id: asc }){
          |      text
          |    }
          |  }
@@ -401,7 +401,7 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
 
                         model Todo{
                             id       String    @id @default(cuid())
-                            comments Comment[] $relationInlineDirective
+                            comments Comment[] $relationInlineAttribute
                         }"""
 
     val project = SchemaDsl.fromStringV11() { schema }
@@ -448,8 +448,8 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
          |    data:{
          |      comments: {
          |        upsert: [
-         |          {where: {id: "$comment1Id"}, update: {text: "update comment1"}, create: {text: "irrelevant"}},
-         |          {where: {id: "$comment2Id"}, update: {text: "irrelevant"}, create: {text: "new comment3"}},
+         |          {where: {id: "$comment1Id"}, update: {text: {set: "update comment1"}}, create: {text: "irrelevant"}},
+         |          {where: {id: "$comment2Id"}, update: {text: {set: "irrelevant"}}, create: {text: "new comment3"}},
          |        ]
          |      }
          |    }
@@ -478,7 +478,7 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
                         model Todo{
                             id         String    @id @default(cuid())
                             uniqueTodo String    @unique
-                            comments   Comment[] $relationInlineDirective
+                            comments   Comment[] $relationInlineAttribute
                         }"""
 
     val project = SchemaDsl.fromStringV11() { schema }
@@ -503,10 +503,9 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
     val todoId     = createResult.pathAsString("data.createTodo.id")
     val comment1Id = createResult.pathAsString("data.createTodo.comments.[0].id")
 
-
     val errorTarget = () match {
-      case _ if isMySQL    => "constraint: `uniqueComment`"
-      case _   => "fields: (`uniqueComment`)"
+      case _ if isMySQL => "constraint: `uniqueComment`"
+      case _            => "fields: (`uniqueComment`)"
     }
 
     server.queryThatMustFail(
@@ -518,7 +517,7 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
          |    data:{
          |      comments: {
          |        upsert: [
-         |          {where: {id: "5beea4aa6183dd734b2dbd9b"}, update: {text: "update comment1"}, create: {text: "irrelevant", uniqueComment: "comments"}},
+         |          {where: {id: "5beea4aa6183dd734b2dbd9b"}, update: {text: {set: "update comment1"}}, create: {text: "irrelevant", uniqueComment: "comments"}},
          |        ]
          |      }
          |    }
@@ -540,14 +539,14 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
     val schema = s"""     model List{
                             id    String @id @default(cuid())
                             name  String
-                            todos Todo[] $relationInlineDirective
+                            todos Todo[] $relationInlineAttribute
                         }
 
                         model Todo{
                             id    String @id @default(cuid())
                             title String
                             list  List?
-                            tags  Tag[] $relationInlineDirective
+                            tags  Tag[] $relationInlineAttribute
                         }
 
                         model Tag{
@@ -611,12 +610,12 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
          |                upsert: [
          |                  {
          |                    where: { id: "$tagId" }
-         |                    update: { name: "updated tag" }
+         |                    update: { name: { set: "updated tag" }}
          |                    create: { name: "irrelevant" }
          |                  },
          |                  {
          |                    where: { id: "5beea4aa6183dd734b2dbd9b" }
-         |                    update: { name: "irrelevant" }
+         |                    update: { name: { set: "irrelevant" }}
          |                    create: { name: "new tag" }
          |                  },
          |                ]
@@ -647,14 +646,14 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
     val schema = s"""     model List{
                             id    String @id @default(cuid())
                             name  String
-                            todos Todo[] $relationInlineDirective
+                            todos Todo[] $relationInlineAttribute
                         }
 
                         model Todo{
                             id    String @id @default(cuid())
                             title String
                             list  List?
-                            tags  Tag[] $relationInlineDirective
+                            tags  Tag[] $relationInlineAttribute
                         }
 
                         model Tag{
@@ -713,7 +712,7 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
          |          {
          |            where: { id: "5beea4aa6183dd734b2dbd9b" }
          |            create: { title: "new todo" tags: { create: [ {name: "the tag"}]}}
-         |            update: { title: "updated todo"}
+         |            update: { title: { set: "updated todo" }}
          |          }
          |        ]
          |      }
@@ -738,14 +737,14 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
     val project = SchemaDsl.fromStringV11() { s"""model Top {
                                              |  id      String   @id @default(cuid())
                                              |  nameTop String   @unique
-                                             |  middles Middle[] $relationInlineDirective
+                                             |  middles Middle[] $relationInlineAttribute
                                              |}
                                              |
                                              |model Middle {
                                              |  id         String @id @default(cuid())
                                              |  nameMiddle String @unique
                                              |  tops       Top[]
-                                             |  bottoms    Bottom[] $relationInlineDirective
+                                             |  bottoms    Bottom[] $relationInlineAttribute
                                              |}
                                              |
                                              |model Bottom {
@@ -802,9 +801,9 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
          |   }
          |  ) {
          |    nameTop
-         |    middles (orderBy: id_ASC){
+         |    middles (orderBy: { id: asc }){
          |      nameMiddle
-         |      bottoms (orderBy: id_ASC){
+         |      bottoms (orderBy: { id: asc }){
          |        nameBottom
          |      }
          |    }
@@ -817,7 +816,7 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
     result.toString should be(
       """{"data":{"updateTop":{"nameTop":"updated top","middles":[{"nameMiddle":"updated middle","bottoms":[{"nameBottom":"updated bottom"},{"nameBottom":"the second bottom"}]},{"nameMiddle":"the second middle","bottoms":[{"nameBottom":"the third bottom"},{"nameBottom":"the fourth bottom"}]}]}}}""")
 
-    server.query("query{bottoms(orderBy: id_ASC){nameBottom}}", project).toString should be(
+    server.query("query{bottoms(orderBy: { id: asc }){nameBottom}}", project).toString should be(
       """{"data":{"bottoms":[{"nameBottom":"updated bottom"},{"nameBottom":"the second bottom"},{"nameBottom":"the third bottom"},{"nameBottom":"the fourth bottom"}]}}""")
   }
 
@@ -825,14 +824,14 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
     val project = SchemaDsl.fromStringV11() { s"""model Top {
                                              |  id      String   @id @default(cuid())
                                              |  nameTop String   @unique
-                                             |  middles Middle[] $relationInlineDirective
+                                             |  middles Middle[] $relationInlineAttribute
                                              |}
                                              |
                                              |model Middle {
                                              |  id         String @id @default(cuid())
                                              |  nameMiddle String @unique
                                              |  tops       Top[]
-                                             |  bottoms    Bottom[] $relationInlineDirective
+                                             |  bottoms    Bottom[] $relationInlineAttribute
                                              |}
                                              |
                                              |model Bottom {
@@ -889,9 +888,9 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
          |   }
          |  ) {
          |    nameTop
-         |    middles (orderBy: id_ASC) {
+         |    middles (orderBy: { id: asc }) {
          |      nameMiddle
-         |      bottoms (orderBy: id_ASC){
+         |      bottoms (orderBy: { id: asc }){
          |        nameBottom
          |      }
          |    }
@@ -904,7 +903,7 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
     result.toString should be(
       """{"data":{"updateTop":{"nameTop":"updated top","middles":[{"nameMiddle":"updated middle","bottoms":[{"nameBottom":"the bottom"},{"nameBottom":"the second bottom"},{"nameBottom":"created bottom"}]},{"nameMiddle":"the second middle","bottoms":[{"nameBottom":"the third bottom"},{"nameBottom":"the fourth bottom"}]}]}}}""")
 
-    server.query("query{bottoms(orderBy: id_ASC){nameBottom}}", project).toString should be(
+    server.query("query{bottoms(orderBy: { id: asc }){nameBottom}}", project).toString should be(
       """{"data":{"bottoms":[{"nameBottom":"the bottom"},{"nameBottom":"the second bottom"},{"nameBottom":"the third bottom"},{"nameBottom":"the fourth bottom"},{"nameBottom":"created bottom"}]}}""")
   }
 
@@ -912,13 +911,13 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
     val project = SchemaDsl.fromStringV11() { s"""model Top {
                                              |  id      String   @id @default(cuid())
                                              |  nameTop String   @unique
-                                             |  middles Middle[] $relationInlineDirective
+                                             |  middles Middle[] $relationInlineAttribute
                                              |}
                                              |
                                              |model Middle {
                                              |  id         String   @id @default(cuid())
                                              |  nameMiddle String   @unique
-                                             |  bottoms    Bottom[] $relationInlineDirective
+                                             |  bottoms    Bottom[] $relationInlineAttribute
                                              |}
                                              |
                                              |model Bottom {
@@ -974,9 +973,9 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
          |   }
          |  ) {
          |    nameTop
-         |    middles (orderBy: id_ASC){
+         |    middles (orderBy: { id: asc }){
          |      nameMiddle
-         |      bottoms (orderBy: id_ASC){
+         |      bottoms (orderBy: { id: asc }){
          |        nameBottom
          |      }
          |    }
@@ -989,7 +988,7 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
     result.toString should be(
       """{"data":{"updateTop":{"nameTop":"updated top","middles":[{"nameMiddle":"updated middle","bottoms":[{"nameBottom":"updated bottom"},{"nameBottom":"the second bottom"}]},{"nameMiddle":"the second middle","bottoms":[{"nameBottom":"the third bottom"},{"nameBottom":"the fourth bottom"}]}]}}}""")
 
-    server.query("query{bottoms(orderBy: id_ASC){nameBottom}}", project).toString should be(
+    server.query("query{bottoms(orderBy: { id: asc }){nameBottom}}", project).toString should be(
       """{"data":{"bottoms":[{"nameBottom":"updated bottom"},{"nameBottom":"the second bottom"},{"nameBottom":"the third bottom"},{"nameBottom":"the fourth bottom"}]}}""")
   }
 
@@ -997,13 +996,13 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
     val project = SchemaDsl.fromStringV11() { s"""model Top {
                                              |  id      String   @id @default(cuid())
                                              |  nameTop String   @unique
-                                             |  middles Middle[] $relationInlineDirective
+                                             |  middles Middle[] $relationInlineAttribute
                                              |}
                                              |
                                              |model Middle {
                                              |  id          String   @id @default(cuid())
                                              |  nameMiddle  String   @unique
-                                             |  bottoms     Bottom[] $relationInlineDirective
+                                             |  bottoms     Bottom[] $relationInlineAttribute
                                              |}
                                              |
                                              |model Bottom {
@@ -1059,9 +1058,9 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
          |   }
          |  ) {
          |    nameTop
-         |    middles (orderBy: id_ASC){
+         |    middles (orderBy: { id: asc }){
          |      nameMiddle
-         |      bottoms (orderBy: id_ASC){
+         |      bottoms (orderBy: { id: asc }){
          |        nameBottom
          |      }
          |    }
@@ -1074,7 +1073,7 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
     result.toString should be(
       """{"data":{"updateTop":{"nameTop":"updated top","middles":[{"nameMiddle":"updated middle","bottoms":[{"nameBottom":"the bottom"},{"nameBottom":"the second bottom"},{"nameBottom":"created bottom"}]},{"nameMiddle":"the second middle","bottoms":[{"nameBottom":"the third bottom"},{"nameBottom":"the fourth bottom"}]}]}}}""")
 
-    server.query("query{bottoms(orderBy: id_ASC){nameBottom}}", project).toString should be(
+    server.query("query{bottoms(orderBy: { id: asc }){nameBottom}}", project).toString should be(
       """{"data":{"bottoms":[{"nameBottom":"the bottom"},{"nameBottom":"the second bottom"},{"nameBottom":"the third bottom"},{"nameBottom":"the fourth bottom"},{"nameBottom":"created bottom"}]}}""")
   }
 
@@ -1082,7 +1081,7 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
     val project = SchemaDsl.fromStringV11() { s"""model Top {
                                              |  id      String   @id @default(cuid())
                                              |  nameTop String   @unique
-                                             |  middles Middle[] $relationInlineDirective
+                                             |  middles Middle[] $relationInlineAttribute
                                              |}
                                              |
                                              |model Middle {
@@ -1140,7 +1139,7 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
          |   }
          |  ) {
          |    nameTop
-         |    middles (orderBy: id_ASC){
+         |    middles (orderBy: { id: asc }){
          |      nameMiddle
          |      bottom {
          |        nameBottom
@@ -1155,7 +1154,7 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
     result.toString should be(
       """{"data":{"updateTop":{"nameTop":"updated top","middles":[{"nameMiddle":"updated middle","bottom":{"nameBottom":"updated bottom"}},{"nameMiddle":"the second middle","bottom":{"nameBottom":"the second bottom"}}]}}}""")
 
-    server.query("query{bottoms(orderBy: id_ASC){nameBottom}}", project).toString should be(
+    server.query("query{bottoms(orderBy: { id: asc }){nameBottom}}", project).toString should be(
       """{"data":{"bottoms":[{"nameBottom":"updated bottom"},{"nameBottom":"the second bottom"}]}}""")
   }
 
@@ -1163,7 +1162,7 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
     val project = SchemaDsl.fromStringV11() { s"""model Top {
                                              |  id      String   @id @default(cuid())
                                              |  nameTop String   @unique
-                                             |  middles Middle[] $relationInlineDirective
+                                             |  middles Middle[] $relationInlineAttribute
                                              |}
                                              |
                                              |model Middle {
@@ -1221,7 +1220,7 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
          |   }
          |  ) {
          |    nameTop
-         |    middles (orderBy: id_ASC) {
+         |    middles (orderBy: { id: asc }) {
          |      nameMiddle
          |      bottom {
          |        nameBottom
@@ -1236,7 +1235,7 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
     result should be(
       """{"data":{"updateTop":{"nameTop":"updated top","middles":[{"nameMiddle":"updated middle","bottom":{"nameBottom":"created bottom"}},{"nameMiddle":"the second middle","bottom":{"nameBottom":"the second bottom"}}]}}}""".parseJson)
 
-    server.query("query{bottoms(orderBy: id_ASC){nameBottom}}", project) should be(
+    server.query("query{bottoms(orderBy: { id: asc }){nameBottom}}", project) should be(
       """{"data":{"bottoms":[{"nameBottom":"the second bottom"},{"nameBottom":"created bottom"}]}}""".parseJson)
   }
 
@@ -1256,7 +1255,7 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
                                              |model Bottom {
                                              |  id         String  @id @default(cuid())
                                              |  nameBottom String  @unique
-                                             |  below      Below[] $relationInlineDirective
+                                             |  below      Below[] $relationInlineAttribute
                                              |}
                                              |
                                              |model Below {
@@ -1315,7 +1314,7 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
          |      nameMiddle
          |      bottom {
          |        nameBottom
-         |        below (orderBy: id_ASC){
+         |        below (orderBy: { id: asc }){
          |           nameBelow
          |        }
          |      }
@@ -1329,7 +1328,7 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
     result.toString should be(
       """{"data":{"updateTop":{"nameTop":"updated top","middle":{"nameMiddle":"updated middle","bottom":{"nameBottom":"updated bottom","below":[{"nameBelow":"updated below"},{"nameBelow":"second below"}]}}}}}""")
 
-    server.query("query{belows(orderBy: id_ASC){nameBelow}}", project).toString should be(
+    server.query("query{belows(orderBy: { id: asc }){nameBelow}}", project).toString should be(
       """{"data":{"belows":[{"nameBelow":"updated below"},{"nameBelow":"second below"}]}}""")
   }
 
@@ -1349,7 +1348,7 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
                                              |model Bottom {
                                              |  id         String  @id @default(cuid())
                                              |  nameBottom String  @unique
-                                             |  below      Below[] $relationInlineDirective
+                                             |  below      Below[] $relationInlineAttribute
                                              |}
                                              |
                                              |model Below {
@@ -1423,7 +1422,7 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
     result.toString should be(
       """{"data":{"updateTop":{"nameTop":"updated top","middle":{"nameMiddle":"updated middle","bottom":{"nameBottom":"updated bottom","below":[{"nameBelow":"below"},{"nameBelow":"second below"},{"nameBelow":"created below"}]}}}}}""")
 
-    server.query("query{belows(orderBy: id_ASC){nameBelow}}", project).toString should be(
+    server.query("query{belows(orderBy: { id: asc }){nameBelow}}", project).toString should be(
       """{"data":{"belows":[{"nameBelow":"below"},{"nameBelow":"second below"},{"nameBelow":"created below"}]}}""")
   }
 
@@ -1740,7 +1739,7 @@ class NestedUpsertMutationInsideUpdateSpec extends FlatSpec with Matchers with A
       s"""
          |model List {
          |  id    String @id @default(cuid())
-         |  todos Todo[] $relationInlineDirective
+         |  todos Todo[] $relationInlineAttribute
          |}
          |
          |model Todo {

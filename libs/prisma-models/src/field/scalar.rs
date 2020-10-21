@@ -2,6 +2,7 @@ use crate::prelude::*;
 use datamodel::{DefaultValue, FieldArity};
 use once_cell::sync::OnceCell;
 use std::{
+    fmt::Debug,
     hash::{Hash, Hasher},
     sync::{Arc, Weak},
 };
@@ -23,6 +24,7 @@ pub struct ScalarFieldTemplate {
     pub is_unique: bool,
     pub is_id: bool,
     pub is_auto_generated_int_id: bool,
+    pub is_autoincrement: bool,
     pub behaviour: Option<FieldBehaviour>,
     pub internal_enum: Option<InternalEnum>,
     pub arity: FieldArity,
@@ -30,7 +32,6 @@ pub struct ScalarFieldTemplate {
     pub default_value: Option<DefaultValue>,
 }
 
-#[derive(DebugStub)]
 pub struct ScalarField {
     pub name: String,
     pub type_identifier: TypeIdentifier,
@@ -38,16 +39,38 @@ pub struct ScalarField {
     pub is_list: bool,
     pub is_id: bool,
     pub is_auto_generated_int_id: bool,
+    pub is_autoincrement: bool,
     pub internal_enum: Option<InternalEnum>,
     pub behaviour: Option<FieldBehaviour>,
     pub arity: FieldArity,
     pub db_name: Option<String>,
     pub default_value: Option<DefaultValue>,
 
-    #[debug_stub = "#ModelWeakRef#"]
     pub model: ModelWeakRef,
     pub(crate) is_unique: bool,
     pub(crate) read_only: OnceCell<bool>,
+}
+
+impl Debug for ScalarField {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ScalarField")
+            .field("name", &self.name)
+            .field("type_identifier", &self.type_identifier)
+            .field("is_required", &self.is_required)
+            .field("is_list", &self.is_list)
+            .field("is_id", &self.is_id)
+            .field("is_auto_generated_int_id", &self.is_auto_generated_int_id)
+            .field("is_autoincrement", &self.is_autoincrement)
+            .field("internal_enum", &self.internal_enum)
+            .field("behaviour", &self.behaviour)
+            .field("arity", &self.arity)
+            .field("db_name", &self.db_name)
+            .field("default_value", &self.default_value)
+            .field("model", &"#ModelWeakRef#")
+            .field("is_unique", &self.is_unique)
+            .field("read_only", &self.read_only)
+            .finish()
+    }
 }
 
 impl Eq for ScalarField {}
@@ -108,6 +131,7 @@ impl ScalarFieldTemplate {
             is_id: self.is_id,
             is_required: self.is_required,
             is_list: self.is_list,
+            is_autoincrement: self.is_autoincrement,
             is_auto_generated_int_id: self.is_auto_generated_int_id,
             read_only: OnceCell::new(),
             is_unique: self.is_unique,
@@ -148,10 +172,7 @@ impl ScalarField {
         if self.model().is_legacy() {
             self.name == CREATED_AT_FIELD
         } else {
-            match self.behaviour {
-                Some(FieldBehaviour::CreatedAt) => true,
-                _ => false,
-            }
+            matches!(self.behaviour, Some(FieldBehaviour::CreatedAt))
         }
     }
 
@@ -159,10 +180,7 @@ impl ScalarField {
         if self.model().is_legacy() {
             self.name == UPDATED_AT_FIELD
         } else {
-            match self.behaviour {
-                Some(FieldBehaviour::UpdatedAt) => true,
-                _ => false,
-            }
+            matches!(self.behaviour, Some(FieldBehaviour::UpdatedAt))
         }
     }
 
@@ -179,6 +197,6 @@ impl ScalarField {
     }
 
     pub fn is_read_only(&self) -> bool {
-        self.read_only.get_or_init(|| false).clone()
+        *self.read_only.get_or_init(|| false)
     }
 }

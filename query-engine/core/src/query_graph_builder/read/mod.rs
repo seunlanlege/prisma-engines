@@ -1,20 +1,23 @@
 mod aggregate;
+mod first;
 mod many;
 mod one;
 mod related;
 
 pub use aggregate::*;
+pub use first::*;
 pub use many::*;
 pub use one::*;
 pub use related::*;
 
 use super::*;
 use crate::{query_document::ParsedField, ReadQuery};
-use prisma_models::{Field, ModelProjection, ModelRef, RelationFieldRef};
+use prisma_models::{Field, ModelProjection, ModelRef, RecordProjection, RelationFieldRef};
 use std::sync::Arc;
 
 pub enum ReadQueryBuilder {
     ReadOneRecordBuilder(ReadOneRecordBuilder),
+    ReadFirstRecordBuilder(ReadFirstRecordBuilder),
     ReadManyRecordsBuilder(ReadManyRecordsBuilder),
     ReadRelatedRecordsBuilder(ReadRelatedRecordsBuilder),
     AggregateRecordsBuilder(AggregateRecordsBuilder),
@@ -24,6 +27,7 @@ impl Builder<ReadQuery> for ReadQueryBuilder {
     fn build(self) -> QueryGraphBuilderResult<ReadQuery> {
         match self {
             ReadQueryBuilder::ReadOneRecordBuilder(b) => b.build(),
+            ReadQueryBuilder::ReadFirstRecordBuilder(b) => b.build(),
             ReadQueryBuilder::ReadManyRecordsBuilder(b) => b.build(),
             ReadQueryBuilder::ReadRelatedRecordsBuilder(b) => b.build(),
             ReadQueryBuilder::AggregateRecordsBuilder(b) => b.build(),
@@ -103,7 +107,7 @@ pub fn merge_relation_selections(
     };
 
     let nested: Vec<_> = nested_queries
-        .into_iter()
+        .iter()
         .map(|nested_query| {
             if let ReadQuery::RelatedRecordsQuery(ref rq) = nested_query {
                 rq.parent_field.linking_fields()
@@ -114,4 +118,13 @@ pub fn merge_relation_selections(
         .collect();
 
     selected_fields.merge(ModelProjection::union(nested))
+}
+
+/// Ensures that if a cursor is provided, its fields are also selected.
+/// Necessary for post-processing of unstable orderings with cursor operations.
+pub fn merge_cursor_fields(selected_fields: ModelProjection, cursor: &Option<RecordProjection>) -> ModelProjection {
+    match cursor {
+        Some(cursor) => selected_fields.merge(cursor.into()),
+        None => selected_fields,
+    }
 }

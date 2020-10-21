@@ -7,7 +7,7 @@ pub enum GqlTypeRenderer<'a> {
 }
 
 impl<'a> Renderer for GqlTypeRenderer<'a> {
-    fn render(&self, ctx: RenderContext) -> (String, RenderContext) {
+    fn render(&self, ctx: &mut RenderContext) -> String {
         match self {
             GqlTypeRenderer::Input(i) => self.render_input_type(i, ctx),
             GqlTypeRenderer::Output(o) => self.render_output_type(o, ctx),
@@ -15,37 +15,30 @@ impl<'a> Renderer for GqlTypeRenderer<'a> {
     }
 }
 
-/// How rendering types is done:
-/// - Render representations recursively (e.g. [TestInputType] would be Option(List(InputType))).
-/// - During that, render dependent types as well by calling the correct renderer, which will add the dependent type to the output queue.
-///
-/// Important to note: The way the AST is build, it's easier to remove "!" (required) suffixes instead of adding them, which is why you
-/// will see types always appending "!" until optional removes them.
 impl<'a> GqlTypeRenderer<'a> {
-    fn render_input_type(&self, i: &InputType, ctx: RenderContext) -> (String, RenderContext) {
+    fn render_input_type(&self, i: &InputType, ctx: &mut RenderContext) -> String {
         match i {
             InputType::Object(ref obj) => {
-                let (_, subctx) = obj.into_renderer().render(ctx);
-                (format!("{}!", obj.into_arc().name), subctx)
+                let _ = obj.into_renderer().render(ctx);
+                obj.into_arc().name.to_string()
             }
+
             InputType::Enum(et) => {
                 // Not sure how this fits together with the enum handling below.
-                let (_, subctx) = et.into_renderer().render(ctx);
-                (format!("{}!", et.name()), subctx)
+                let _ = et.into_renderer().render(ctx);
+                et.name().to_string()
             }
+
             InputType::List(ref l) => {
-                let (substring, subctx) = self.render_input_type(l, ctx);
-                (format!("[{}]!", substring), subctx)
+                let substring = self.render_input_type(l, ctx);
+                format!("[{}]", substring)
             }
-            InputType::Opt(ref opt) => {
-                let (substring, subctx) = self.render_input_type(opt, ctx);
-                (substring.trim_end_matches('!').to_owned(), subctx)
-            }
-            InputType::Null(ref inner) => self.render_input_type(inner, ctx), // Nullability has no representation in GQL
+
             InputType::Scalar(ScalarType::Enum(et)) => {
-                let (_, subctx) = et.into_renderer().render(ctx);
-                (format!("{}!", et.name()), subctx)
+                let _ = et.into_renderer().render(ctx);
+                et.name().to_string()
             }
+
             InputType::Scalar(ref scalar) => {
                 let stringified = match scalar {
                     ScalarType::String => "String",
@@ -56,37 +49,38 @@ impl<'a> GqlTypeRenderer<'a> {
                     ScalarType::Json => "DateTime",
                     ScalarType::UUID => "UUID",
                     ScalarType::JsonList => "Json",
-                    ScalarType::Enum(_) => unreachable!(), // Handled separately above.
+                    ScalarType::Enum(_) => unreachable!("Encountered enum type during GQL scalar rendering."), // Handled separately above.
+                    ScalarType::Null => unreachable!("Null types should not be picked for GQL rendering."),
                 };
 
-                (format!("{}!", stringified), ctx)
+                stringified.to_owned()
             }
         }
     }
 
-    fn render_output_type(&self, o: &OutputType, ctx: RenderContext) -> (String, RenderContext) {
+    fn render_output_type(&self, o: &OutputType, ctx: &mut RenderContext) -> String {
         match o {
             OutputType::Object(obj) => {
-                let (_, subctx) = obj.into_renderer().render(ctx);
-                (format!("{}!", obj.into_arc().name()), subctx)
+                let _ = obj.into_renderer().render(ctx);
+                obj.into_arc().name().to_string()
             }
+
             OutputType::Enum(et) => {
                 // Not sure how this fits together with the enum handling below.
-                let (_, subctx) = et.into_renderer().render(ctx);
-                (format!("{}!", et.name()), subctx)
+                let _ = et.into_renderer().render(ctx);
+                et.name().to_string()
             }
+
             OutputType::List(l) => {
-                let (substring, subctx) = self.render_output_type(l, ctx);
-                (format!("[{}]!", substring), subctx)
+                let substring = self.render_output_type(l, ctx);
+                format!("[{}]", substring)
             }
-            OutputType::Opt(ref opt) => {
-                let (substring, subctx) = self.render_output_type(opt, ctx);
-                (substring.trim_end_matches('!').to_owned(), subctx)
-            }
+
             OutputType::Scalar(ScalarType::Enum(et)) => {
-                let (_, subctx) = et.into_renderer().render(ctx);
-                (format!("{}!", et.name()), subctx)
+                let _ = et.into_renderer().render(ctx);
+                et.name().to_string()
             }
+
             OutputType::Scalar(ref scalar) => {
                 let stringified = match scalar {
                     ScalarType::String => "String",
@@ -97,10 +91,11 @@ impl<'a> GqlTypeRenderer<'a> {
                     ScalarType::Json => "Json",
                     ScalarType::UUID => "UUID",
                     ScalarType::JsonList => "Json",
-                    ScalarType::Enum(_) => unreachable!(), // Handled separately above.
+                    ScalarType::Enum(_) => unreachable!("Encountered enum type during GQL scalar rendering."), // Handled separately above.
+                    ScalarType::Null => unreachable!("Null types should not be picked for GQL rendering."),
                 };
 
-                (format!("{}!", stringified), ctx)
+                format!("{}!", stringified)
             }
         }
     }

@@ -1,5 +1,6 @@
 use crate::error::SqlError;
 use chrono::{DateTime, NaiveDate, Utc};
+use connector_interface::{AggregationResult, Aggregator};
 use datamodel::FieldArity;
 use prisma_models::{PrismaValue, Record, TypeIdentifier};
 use quaint::{
@@ -14,6 +15,58 @@ use uuid::Uuid;
 #[derive(Debug, Clone, Default)]
 pub struct SqlRow {
     pub values: Vec<PrismaValue>,
+}
+
+impl SqlRow {
+    pub fn into_aggregation_results(self, aggregators: &[Aggregator]) -> Vec<AggregationResult> {
+        let mut values = self.values;
+        values.reverse();
+
+        aggregators
+            .iter()
+            .flat_map(|aggregator| match aggregator {
+                Aggregator::Count => vec![AggregationResult::Count(coerce_null_to_zero_value(
+                    values.pop().unwrap(),
+                ))],
+
+                Aggregator::Average(fields) => fields
+                    .iter()
+                    .map(|field| {
+                        AggregationResult::Average(field.clone(), coerce_null_to_zero_value(values.pop().unwrap()))
+                    })
+                    .collect(),
+
+                Aggregator::Sum(fields) => fields
+                    .iter()
+                    .map(|field| {
+                        AggregationResult::Sum(field.clone(), coerce_null_to_zero_value(values.pop().unwrap()))
+                    })
+                    .collect(),
+
+                Aggregator::Min(fields) => fields
+                    .iter()
+                    .map(|field| {
+                        AggregationResult::Min(field.clone(), coerce_null_to_zero_value(values.pop().unwrap()))
+                    })
+                    .collect(),
+
+                Aggregator::Max(fields) => fields
+                    .iter()
+                    .map(|field| {
+                        AggregationResult::Max(field.clone(), coerce_null_to_zero_value(values.pop().unwrap()))
+                    })
+                    .collect(),
+            })
+            .collect()
+    }
+}
+
+fn coerce_null_to_zero_value(value: PrismaValue) -> PrismaValue {
+    if let PrismaValue::Null = value {
+        PrismaValue::Int(0)
+    } else {
+        value
+    }
 }
 
 impl From<SqlRow> for Record {
@@ -45,7 +98,7 @@ impl ToSqlRow for ResultRow {
                         .into_iter()
                         .map(|p_value| row_value_to_prisma_value(p_value, &type_identifier))
                         .collect::<crate::Result<Vec<_>>>()
-                        .map(|vec| PrismaValue::List(vec)),
+                        .map(PrismaValue::List),
                     _ => {
                         let error = io::Error::new(
                             io::ErrorKind::InvalidData,
@@ -68,7 +121,7 @@ pub fn row_value_to_prisma_value(p_value: Value, type_identifier: &TypeIdentifie
     Ok(match type_identifier {
         TypeIdentifier::Boolean => match p_value {
             // Value::Array(vec) => PrismaValue::Boolean(b),
-            value if value.is_null() => PrismaValue::null(type_identifier.clone()),
+            value if value.is_null() => PrismaValue::Null,
             Value::Integer(Some(i)) => PrismaValue::Boolean(i != 0),
             Value::Boolean(Some(b)) => PrismaValue::Boolean(b),
             _ => {
@@ -77,7 +130,7 @@ pub fn row_value_to_prisma_value(p_value: Value, type_identifier: &TypeIdentifie
             }
         },
         TypeIdentifier::Enum(_) => match p_value {
-            value if value.is_null() => PrismaValue::null(type_identifier.clone()),
+            value if value.is_null() => PrismaValue::Null,
             Value::Enum(Some(cow)) => PrismaValue::Enum(cow.into_owned()),
             Value::Text(Some(cow)) => PrismaValue::Enum(cow.into_owned()),
             _ => {
@@ -87,7 +140,7 @@ pub fn row_value_to_prisma_value(p_value: Value, type_identifier: &TypeIdentifie
         },
 
         TypeIdentifier::Json => match p_value {
-            value if value.is_null() => PrismaValue::null(type_identifier.clone()),
+            value if value.is_null() => PrismaValue::Null,
             Value::Text(Some(json)) => PrismaValue::Json(json.into()),
             Value::Json(Some(json)) => PrismaValue::Json(json.to_string()),
             _ => {
@@ -96,7 +149,7 @@ pub fn row_value_to_prisma_value(p_value: Value, type_identifier: &TypeIdentifie
             }
         },
         TypeIdentifier::UUID => match p_value {
-            value if value.is_null() => PrismaValue::null(type_identifier.clone()),
+            value if value.is_null() => PrismaValue::Null,
             Value::Text(Some(uuid)) => PrismaValue::Uuid(Uuid::parse_str(&uuid)?),
             Value::Uuid(Some(uuid)) => PrismaValue::Uuid(uuid),
             _ => {
@@ -105,7 +158,7 @@ pub fn row_value_to_prisma_value(p_value: Value, type_identifier: &TypeIdentifie
             }
         },
         TypeIdentifier::DateTime => match p_value {
-            value if value.is_null() => PrismaValue::null(type_identifier.clone()),
+            value if value.is_null() => PrismaValue::Null,
             Value::DateTime(Some(dt)) => PrismaValue::DateTime(dt),
             Value::Integer(Some(ts)) => {
                 let nsecs = ((ts % 1000) * 1_000_000) as u32;
@@ -119,7 +172,7 @@ pub fn row_value_to_prisma_value(p_value: Value, type_identifier: &TypeIdentifie
                 let dt = DateTime::parse_from_rfc3339(dt_string.borrow())
                     .or_else(|_| DateTime::parse_from_rfc2822(dt_string.borrow()))
                     .map_err(|err| {
-                        failure::format_err!("Could not parse stored DateTime string: {} ({})", dt_string, err)
+                        anyhow::format_err!("Could not parse stored DateTime string: {} ({})", dt_string, err)
                     })
                     .unwrap();
 
@@ -143,19 +196,21 @@ pub fn row_value_to_prisma_value(p_value: Value, type_identifier: &TypeIdentifie
             }
         },
         TypeIdentifier::Float => match p_value {
-            value if value.is_null() => PrismaValue::null(type_identifier.clone()),
-            Value::Real(Some(f)) => PrismaValue::Float(f),
+            value if value.is_null() => PrismaValue::Null,
+            Value::Real(Some(f)) => PrismaValue::Float(f.normalize()),
             Value::Integer(Some(i)) => {
                 // Decimal::from_f64 is buggy. Issue: https://github.com/paupino/rust-decimal/issues/228
                 PrismaValue::Float(Decimal::from_str(&(i as f64).to_string()).expect("f64 was not a Decimal."))
             }
-            Value::Text(_) | Value::Bytes(_) => PrismaValue::Float(
-                p_value
+            Value::Text(_) | Value::Bytes(_) => {
+                let dec: Decimal = p_value
                     .as_str()
                     .expect("text/bytes as str")
                     .parse()
-                    .map_err(|err: rust_decimal::Error| SqlError::ColumnReadFailure(err.into()))?,
-            ),
+                    .map_err(|err: rust_decimal::Error| SqlError::ColumnReadFailure(err.into()))?;
+
+                PrismaValue::Float(dec.normalize())
+            }
             _ => {
                 let error = io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -173,7 +228,7 @@ pub fn row_value_to_prisma_value(p_value: Value, type_identifier: &TypeIdentifie
             other => PrismaValue::from(other),
         },
         TypeIdentifier::String => match p_value {
-            value if value.is_null() => PrismaValue::null(type_identifier.clone()),
+            value if value.is_null() => PrismaValue::Null,
             Value::Uuid(Some(uuid)) => PrismaValue::String(uuid.to_string()),
             Value::Json(Some(json_value)) => {
                 PrismaValue::String(serde_json::to_string(&json_value).expect("JSON value to string"))

@@ -1,8 +1,9 @@
 use super::*;
 use crate::{
     schema::{IntoArc, ObjectTypeStrongRef, OutputType, OutputTypeRef, ScalarType},
-    AggregationQueryResult, CoreError, EnumType, QueryResult, RecordAggregation, RecordSelection,
+    CoreError, EnumType, OutputFieldRef, QueryResult, RecordAggregation, RecordSelection,
 };
+use connector::AggregationResult;
 use indexmap::IndexMap;
 use prisma_models::{InternalEnum, PrismaValue, RecordProjection};
 use rust_decimal::prelude::ToPrimitive;
@@ -34,12 +35,11 @@ type UncheckedItemsWithParents = IndexMap<Option<RecordProjection>, Vec<Item>>;
 /// Returns a map of pairs of (parent ID, response)
 pub fn serialize_internal(
     result: QueryResult,
-    typ: &OutputTypeRef,
+    field: &OutputFieldRef,
     is_list: bool,
-    is_optional: bool,
 ) -> crate::Result<CheckedItemsWithParents> {
     match result {
-        QueryResult::RecordSelection(rs) => serialize_record_selection(rs, typ, is_list, is_optional),
+        QueryResult::RecordSelection(rs) => serialize_record_selection(rs, field, &field.field_type, is_list),
         QueryResult::RecordAggregation(ra) => serialize_aggregation(ra),
 
         QueryResult::Count(c) => {
@@ -60,36 +60,72 @@ pub fn serialize_internal(
 }
 
 fn serialize_aggregation(record_aggregation: RecordAggregation) -> crate::Result<CheckedItemsWithParents> {
-    let mut envelope = CheckedItemsWithParents::new();
-    let mut inner_map: Map = IndexMap::with_capacity(record_aggregation.results.len());
+    let ordering = record_aggregation.selection_order;
+    let results = record_aggregation.results;
 
-    for result in record_aggregation.results {
+    let mut flattened = HashMap::with_capacity(ordering.len());
+
+    for result in results {
         match result {
-            AggregationQueryResult::Count(name, count) => {
-                inner_map.insert(name, Item::Value(PrismaValue::Int(count as i64)));
+            AggregationResult::Count(count) => {
+                flattened.insert("count".to_owned(), Item::Value(count));
+            }
+
+            AggregationResult::Average(field, value) => {
+                flattened.insert(format!("avg_{}", &field.name), Item::Value(value));
+            }
+
+            AggregationResult::Sum(field, value) => {
+                flattened.insert(format!("sum_{}", &field.name), Item::Value(value));
+            }
+
+            AggregationResult::Min(field, value) => {
+                flattened.insert(format!("min_{}", &field.name), Item::Value(value));
+            }
+
+            AggregationResult::Max(field, value) => {
+                flattened.insert(format!("max_{}", &field.name), Item::Value(value));
             }
         }
     }
 
+    // Reorder fields based on the original query selection.
+    let mut inner_map: Map = IndexMap::with_capacity(ordering.len());
+    for (query, field_order) in ordering {
+        if let Some(order) = field_order {
+            let mut nested_map = Map::new();
+
+            for field in order {
+                let item = flattened.remove(&format!("{}_{}", query, field)).unwrap();
+                nested_map.insert(field, item);
+            }
+
+            inner_map.insert(query, Item::Map(nested_map));
+        } else {
+            let item = flattened.remove(&query).unwrap();
+            inner_map.insert(query, item);
+        }
+    }
+
+    let mut envelope = CheckedItemsWithParents::new();
     envelope.insert(None, Item::Map(inner_map));
 
-    // [DTODO] Ordering when we have more queries
     Ok(envelope)
 }
 
 fn serialize_record_selection(
     record_selection: RecordSelection,
-    typ: &OutputTypeRef,
+    field: &OutputFieldRef,
+    typ: &OutputTypeRef, // We additionally pass the type to allow recursing into nested type definitions of a field.
     is_list: bool,
-    is_optional: bool,
 ) -> crate::Result<CheckedItemsWithParents> {
     let name = record_selection.name.clone();
 
     match typ.borrow() {
-        OutputType::List(inner) => serialize_record_selection(record_selection, inner, true, false),
-        OutputType::Opt(inner) => serialize_record_selection(record_selection, inner, is_list, true),
+        OutputType::List(inner) => serialize_record_selection(record_selection, field, inner, true),
         OutputType::Object(obj) => {
             let result = serialize_objects(record_selection, obj.into_arc())?;
+            let is_optional = !field.is_required;
 
             // Items will be ref'ed on the top level to allow cheap clones in nested scenarios.
             match (is_list, is_optional) {
@@ -100,10 +136,7 @@ fn serialize_record_selection(
                         .map(|(parent, items)| {
                             if !opt {
                                 // Check that all items are non-null
-                                if items.iter().any(|item| match item {
-                                    Item::Value(PrismaValue::Null(_)) => true,
-                                    _ => false,
-                                }) {
+                                if items.iter().any(|item| matches!(item, Item::Value(PrismaValue::Null))) {
                                     return Err(CoreError::SerializationError(format!(
                                         "Required field '{}' returned a null record",
                                         name
@@ -126,21 +159,10 @@ fn serialize_record_selection(
                                 items.reverse();
                                 let first = items.pop().unwrap();
 
-                                // [DTODO] Workaround for incredibly hard to follow 1:m read relation issue that produces multiple identical records.
-                                if items.iter().all(|i| i == &first) {
-                                    Ok((parent, Item::Ref(ItemRef::new(items.pop().unwrap()))))
-                                } else {
-                                    Err(CoreError::SerializationError(format!(
-                                        "Expected at most 1 item for '{}', got {}",
-                                        name,
-                                        items.len() + 1
-                                    )))
-                                }
+                                // Simple return the first record in the list.
+                                Ok((parent, Item::Ref(ItemRef::new(first))))
                             } else if items.is_empty() && opt {
-                                Ok((
-                                    parent,
-                                    Item::Ref(ItemRef::new(Item::Value(PrismaValue::Null(TypeHint::Unknown)))),
-                                ))
+                                Ok((parent, Item::Ref(ItemRef::new(Item::Value(PrismaValue::Null)))))
                             } else if items.is_empty() && opt {
                                 Err(CoreError::SerializationError(format!(
                                     "Required field '{}' returned a null record",
@@ -203,7 +225,7 @@ fn serialize_objects(
             let field = typ.find_field(scalar_field_name).unwrap();
 
             if !field.field_type.is_object() {
-                object.insert(scalar_field_name.to_owned(), serialize_scalar(val, &field.field_type)?);
+                object.insert(scalar_field_name.to_owned(), serialize_scalar(&field, val)?);
             }
         }
 
@@ -253,13 +275,7 @@ fn write_nested_items(
                 let field = enclosing_type.find_field(field_name).unwrap();
                 let default = match field.field_type.borrow() {
                     OutputType::List(_) => Item::list(Vec::new()),
-                    OutputType::Opt(inner) => {
-                        if inner.is_list() {
-                            Item::list(Vec::new())
-                        } else {
-                            Item::Value(PrismaValue::Null(TypeHint::Unknown))
-                        }
-                    }
+                    _ if !field.is_required => Item::Value(PrismaValue::Null),
                     _ => panic!(
                         "Application logic invariant error: received null value for field {} which may not be null",
                         &field_name
@@ -288,7 +304,7 @@ fn process_nested_results(
         if let QueryResult::RecordSelection(ref rs) = nested_result {
             let name = rs.name.clone();
             let field = enclosing_type.find_field(&name).unwrap();
-            let result = serialize_internal(nested_result, &field.field_type, false, false)?;
+            let result = serialize_internal(nested_result, &field, false)?;
 
             nested_mapping.insert(name, result);
         }
@@ -297,10 +313,9 @@ fn process_nested_results(
     Ok(nested_mapping)
 }
 
-fn serialize_scalar(value: PrismaValue, typ: &OutputTypeRef) -> crate::Result<Item> {
-    match (&value, typ.as_ref()) {
-        (PrismaValue::Null(_), OutputType::Opt(_)) => Ok(Item::Value(PrismaValue::Null(TypeHint::Unknown))),
-        (_, OutputType::Opt(inner)) => serialize_scalar(value, inner),
+fn serialize_scalar(field: &OutputFieldRef, value: PrismaValue) -> crate::Result<Item> {
+    match (&value, field.field_type.as_ref()) {
+        (PrismaValue::Null, _) if !field.is_required => Ok(Item::Value(PrismaValue::Null)),
         (_, OutputType::Enum(et)) => match et.borrow() {
             EnumType::Internal(ref i) => convert_enum(value, i),
             _ => unreachable!(),
@@ -310,7 +325,7 @@ fn serialize_scalar(value: PrismaValue, typ: &OutputTypeRef) -> crate::Result<It
                 let items = unwrap_prisma_value(value)
                     .into_iter()
                     .map(|v| convert_prisma_value(v, subtype))
-                    .map(|pv| pv.map(|x| Item::Value(x)))
+                    .map(|pv| pv.map(Item::Value))
                     .collect::<Result<Vec<Item>, CoreError>>()?;
                 Ok(Item::list(items))
             }

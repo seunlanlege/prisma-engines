@@ -5,6 +5,7 @@ mod test_api;
 use barrel::{types, Migration};
 use common::*;
 use pretty_assertions::assert_eq;
+use quaint::prelude::Queryable;
 use sql_schema_describer::*;
 use sqlite::*;
 use test_api::{sqlite_test_api, TestApi, TestResult};
@@ -26,7 +27,7 @@ async fn sqlite_column_types_must_work() {
     let inspector = get_sqlite_describer(&full_sql, "sqlite_column_types_must_work").await;
     let result = inspector.describe(SCHEMA).await.expect("describing");
     let table = result.get_table("User").expect("couldn't get User table");
-    let mut expected_columns = vec![
+    let expected_columns = vec![
         Column {
             name: "int_col".to_string(),
             tpe: ColumnType {
@@ -35,6 +36,7 @@ async fn sqlite_column_types_must_work() {
                 character_maximum_length: None,
                 family: ColumnTypeFamily::Int,
                 arity: ColumnArity::Required,
+                native_type: None,
             },
             default: None,
             auto_increment: false,
@@ -47,6 +49,7 @@ async fn sqlite_column_types_must_work() {
                 character_maximum_length: None,
                 family: ColumnTypeFamily::Int,
                 arity: ColumnArity::Required,
+                native_type: None,
             },
             default: None,
             auto_increment: false,
@@ -59,6 +62,7 @@ async fn sqlite_column_types_must_work() {
                 character_maximum_length: None,
                 family: ColumnTypeFamily::String,
                 arity: ColumnArity::Required,
+                native_type: None,
             },
             default: None,
             auto_increment: false,
@@ -69,8 +73,9 @@ async fn sqlite_column_types_must_work() {
                 data_type: "REAL".to_string(),
                 full_data_type: "REAL".to_string(),
                 character_maximum_length: None,
-                family: ColumnTypeFamily::Float,
+                family: ColumnTypeFamily::Decimal,
                 arity: ColumnArity::Required,
+                native_type: None,
             },
             default: None,
             auto_increment: false,
@@ -83,6 +88,7 @@ async fn sqlite_column_types_must_work() {
                 character_maximum_length: None,
                 family: ColumnTypeFamily::Int,
                 arity: ColumnArity::Required,
+                native_type: None,
             },
             default: None,
             auto_increment: true,
@@ -93,14 +99,14 @@ async fn sqlite_column_types_must_work() {
                 data_type: "decimal (5, 3)".to_string(),
                 full_data_type: "decimal (5, 3)".to_string(),
                 character_maximum_length: None,
-                family: ColumnTypeFamily::Float,
+                family: ColumnTypeFamily::Decimal,
                 arity: ColumnArity::Required,
+                native_type: None,
             },
             default: None,
             auto_increment: false,
         },
     ];
-    expected_columns.sort_unstable_by_key(|c| c.name.to_owned());
 
     assert_eq!(
         table,
@@ -111,6 +117,7 @@ async fn sqlite_column_types_must_work() {
             primary_key: Some(PrimaryKey {
                 columns: vec!["primary_col".to_string()],
                 sequence: None,
+                constraint_name: None,
             }),
             foreign_keys: vec![],
         }
@@ -143,6 +150,19 @@ async fn sqlite_foreign_key_on_delete_must_be_handled() {
             name: "User".to_string(),
             columns: vec![
                 Column {
+                    name: "id".to_string(),
+                    tpe: ColumnType {
+                        data_type: "INTEGER".to_string(),
+                        full_data_type: "INTEGER".to_string(),
+                        character_maximum_length: None,
+                        family: ColumnTypeFamily::Int,
+                        arity: ColumnArity::Required,
+                        native_type: None,
+                    },
+                    default: None,
+                    auto_increment: true,
+                },
+                Column {
                     name: "city".to_string(),
                     tpe: ColumnType {
                         data_type: "INTEGER".to_string(),
@@ -150,6 +170,7 @@ async fn sqlite_foreign_key_on_delete_must_be_handled() {
                         character_maximum_length: None,
                         family: ColumnTypeFamily::Int,
                         arity: ColumnArity::Nullable,
+                        native_type: None,
                     },
                     default: None,
                     auto_increment: false,
@@ -162,6 +183,7 @@ async fn sqlite_foreign_key_on_delete_must_be_handled() {
                         character_maximum_length: None,
                         family: ColumnTypeFamily::Int,
                         arity: ColumnArity::Nullable,
+                        native_type: None,
                     },
                     default: None,
                     auto_increment: false,
@@ -174,6 +196,7 @@ async fn sqlite_foreign_key_on_delete_must_be_handled() {
                         character_maximum_length: None,
                         family: ColumnTypeFamily::Int,
                         arity: ColumnArity::Nullable,
+                        native_type: None,
                     },
                     default: None,
                     auto_increment: false,
@@ -186,6 +209,7 @@ async fn sqlite_foreign_key_on_delete_must_be_handled() {
                         character_maximum_length: None,
                         family: ColumnTypeFamily::Int,
                         arity: ColumnArity::Nullable,
+                        native_type: None,
                     },
                     default: None,
                     auto_increment: false,
@@ -199,27 +223,17 @@ async fn sqlite_foreign_key_on_delete_must_be_handled() {
 
                         family: ColumnTypeFamily::Int,
                         arity: ColumnArity::Nullable,
+                        native_type: None,
                     },
                     default: None,
                     auto_increment: false,
-                },
-                Column {
-                    name: "id".to_string(),
-                    tpe: ColumnType {
-                        data_type: "INTEGER".to_string(),
-                        full_data_type: "INTEGER".to_string(),
-                        character_maximum_length: None,
-                        family: ColumnTypeFamily::Int,
-                        arity: ColumnArity::Required,
-                    },
-                    default: None,
-                    auto_increment: true,
                 },
             ],
             indices: vec![],
             primary_key: Some(PrimaryKey {
                 columns: vec!["id".to_string()],
                 sequence: None,
+                constraint_name: None,
             }),
             foreign_keys: vec![
                 ForeignKey {
@@ -227,6 +241,7 @@ async fn sqlite_foreign_key_on_delete_must_be_handled() {
                     columns: vec!["city".to_string()],
                     referenced_columns: vec!["id".to_string()],
                     referenced_table: "City".to_string(),
+                    on_update_action: ForeignKeyAction::NoAction,
                     on_delete_action: ForeignKeyAction::NoAction,
                 },
                 ForeignKey {
@@ -234,6 +249,7 @@ async fn sqlite_foreign_key_on_delete_must_be_handled() {
                     columns: vec!["city_cascade".to_string()],
                     referenced_columns: vec!["id".to_string()],
                     referenced_table: "City".to_string(),
+                    on_update_action: ForeignKeyAction::NoAction,
                     on_delete_action: ForeignKeyAction::Cascade,
                 },
                 ForeignKey {
@@ -241,6 +257,7 @@ async fn sqlite_foreign_key_on_delete_must_be_handled() {
                     columns: vec!["city_restrict".to_string()],
                     referenced_columns: vec!["id".to_string()],
                     referenced_table: "City".to_string(),
+                    on_update_action: ForeignKeyAction::NoAction,
                     on_delete_action: ForeignKeyAction::Restrict,
                 },
                 ForeignKey {
@@ -248,6 +265,7 @@ async fn sqlite_foreign_key_on_delete_must_be_handled() {
                     columns: vec!["city_set_default".to_string()],
                     referenced_columns: vec!["id".to_string()],
                     referenced_table: "City".to_string(),
+                    on_update_action: ForeignKeyAction::NoAction,
                     on_delete_action: ForeignKeyAction::SetDefault,
                 },
                 ForeignKey {
@@ -255,6 +273,7 @@ async fn sqlite_foreign_key_on_delete_must_be_handled() {
                     columns: vec!["city_set_null".to_string()],
                     referenced_columns: vec!["id".to_string()],
                     referenced_table: "City".to_string(),
+                    on_update_action: ForeignKeyAction::NoAction,
                     on_delete_action: ForeignKeyAction::SetNull,
                 },
             ],
@@ -291,7 +310,8 @@ async fn sqlite_text_primary_keys_must_be_inferred_on_table_and_not_as_separate_
         table.primary_key.as_ref().unwrap(),
         &PrimaryKey {
             columns: vec!["primary_col".to_owned()],
-            sequence: None
+            sequence: None,
+            constraint_name: None,
         }
     );
 }

@@ -1,18 +1,17 @@
+use crate::request_handlers::graphql::{self, GraphQlBody};
+
 use crate::{
     context::PrismaContext,
     dmmf,
-    error::PrismaError,
     opt::{CliOpt, PrismaOpt, Subcommand},
-    request_handlers::{graphql::*, PrismaRequest, RequestHandler},
     PrismaResult,
 };
+
 use datamodel::{Configuration, Datamodel};
+use datamodel_connector::ConnectorCapabilities;
 use prisma_models::DatamodelConverter;
-use query_core::{
-    schema::{QuerySchemaRef, SupportedCapabilities},
-    BuildMode, QuerySchemaBuilder,
-};
-use std::{collections::HashMap, convert::TryFrom, sync::Arc};
+use query_core::{schema::QuerySchemaRef, schema_builder, BuildMode};
+use std::sync::Arc;
 
 pub struct ExecuteRequest {
     legacy: bool,
@@ -26,6 +25,7 @@ pub struct DmmfRequest {
     datamodel: Datamodel,
     build_mode: BuildMode,
     enable_raw_queries: bool,
+    config: Configuration,
 }
 
 pub struct GetConfigRequest {
@@ -38,14 +38,14 @@ pub enum CliCommand {
     ExecuteRequest(ExecuteRequest),
 }
 
-impl TryFrom<&PrismaOpt> for CliCommand {
-    type Error = PrismaError;
-
-    fn try_from(opts: &PrismaOpt) -> crate::PrismaResult<CliCommand> {
-        let subcommand = opts
-            .subcommand
-            .as_ref()
-            .ok_or_else(|| PrismaError::InvocationError(String::from("cli subcommand not present")))?;
+impl CliCommand {
+    /// Create a CLI command from a `PrismaOpt` instance.
+    pub fn from_opt(opts: &PrismaOpt) -> crate::PrismaResult<Option<CliCommand>> {
+        let subcommand = opts.subcommand.as_ref();
+        let subcommand = match subcommand {
+            Some(cmd) => cmd,
+            None => return Ok(None),
+        };
 
         match subcommand {
             Subcommand::Cli(ref cliopts) => match cliopts {
@@ -56,51 +56,51 @@ impl TryFrom<&PrismaOpt> for CliCommand {
                         BuildMode::Modern
                     };
 
-                    Ok(CliCommand::Dmmf(DmmfRequest {
+                    Ok(Some(CliCommand::Dmmf(DmmfRequest {
                         datamodel: opts.datamodel(true)?,
                         build_mode,
                         enable_raw_queries: opts.enable_raw_queries,
-                    }))
+                        config: opts.configuration(true)?,
+                    })))
                 }
-                CliOpt::GetConfig(input) => Ok(CliCommand::GetConfig(GetConfigRequest {
+                CliOpt::GetConfig(input) => Ok(Some(CliCommand::GetConfig(GetConfigRequest {
                     config: opts.configuration(input.ignore_env_var_errors)?,
-                })),
-                CliOpt::ExecuteRequest(input) => Ok(CliCommand::ExecuteRequest(ExecuteRequest {
+                }))),
+                CliOpt::ExecuteRequest(input) => Ok(Some(CliCommand::ExecuteRequest(ExecuteRequest {
                     query: input.query.clone(),
                     enable_raw_queries: opts.enable_raw_queries,
                     legacy: input.legacy,
                     datamodel: opts.datamodel(false)?,
                     config: opts.configuration(false)?,
-                })),
+                }))),
             },
         }
     }
-}
 
-impl CliCommand {
     pub async fn execute(self) -> PrismaResult<()> {
         match self {
-            CliCommand::Dmmf(request) => Self::dmmf(request),
+            CliCommand::Dmmf(request) => Self::dmmf(request).await,
             CliCommand::GetConfig(input) => Self::get_config(input.config),
             CliCommand::ExecuteRequest(request) => Self::execute_request(request).await,
         }
     }
 
-    fn dmmf(request: DmmfRequest) -> PrismaResult<()> {
+    async fn dmmf(request: DmmfRequest) -> PrismaResult<()> {
         let template = DatamodelConverter::convert(&request.datamodel);
+
+        let capabilities = match request.config.datasources.first() {
+            Some(datasource) => datasource.capabilities(),
+            None => ConnectorCapabilities::empty(),
+        };
 
         // temporary code duplication
         let internal_data_model = template.build("".into());
-        let capabilities = SupportedCapabilities::empty();
-
-        let schema_builder = QuerySchemaBuilder::new(
-            &internal_data_model,
-            &capabilities,
+        let query_schema: QuerySchemaRef = Arc::new(schema_builder::build(
+            internal_data_model,
             request.build_mode,
             request.enable_raw_queries,
-        );
-
-        let query_schema: QuerySchemaRef = Arc::new(schema_builder.build());
+            capabilities,
+        ));
 
         let dmmf = dmmf::render_dmmf(&request.datamodel, query_schema);
         let serialized = serde_json::to_string_pretty(&dmmf)?;
@@ -123,22 +123,21 @@ impl CliCommand {
         let decoded = base64::decode(&request.query)?;
         let decoded_request = String::from_utf8(decoded)?;
 
-        let ctx = PrismaContext::builder(request.config, request.datamodel)
-            .legacy(request.legacy)
-            .enable_raw_queries(request.enable_raw_queries)
-            .build()
-            .await?;
+        let cx = PrismaContext::builder(
+            request.config.validate_that_one_datasource_is_provided()?,
+            request.datamodel,
+        )
+        .legacy(request.legacy)
+        .enable_raw_queries(request.enable_raw_queries)
+        .build()
+        .await?;
+        let cx = Arc::new(cx);
 
-        let req = PrismaRequest {
-            body: serde_json::from_str(&decoded_request).unwrap(),
-            headers: HashMap::new(),
-            path: String::new(),
-        };
+        let body: GraphQlBody = serde_json::from_str(&decoded_request)?;
+        let res = graphql::handle(body, cx).await;
+        let res = serde_json::to_string(&res).unwrap();
 
-        let response = GraphQlRequestHandler.handle(req, &Arc::new(ctx)).await;
-        let response = serde_json::to_string(&response).unwrap();
-
-        let encoded_response = base64::encode(&response);
+        let encoded_response = base64::encode(&res);
         println!("Response: {}", encoded_response); // reason for prefix is explained in TestServer.scala
 
         Ok(())

@@ -13,7 +13,7 @@ pub struct InternalDataModelTemplate {
     pub version: Option<String>,
 }
 
-#[derive(DebugStub)]
+#[derive(Debug)]
 pub struct InternalDataModel {
     pub enums: Vec<InternalEnum>,
     version: Option<String>,
@@ -172,5 +172,13 @@ impl InternalDataModel {
                     .collect()
             })
             .as_slice()
+    }
+
+    pub fn non_embedded_models(&self) -> Vec<ModelRef> {
+        self.models()
+            .iter()
+            .filter(|m| !m.is_embedded)
+            .map(|m| Arc::clone(m))
+            .collect()
     }
 }

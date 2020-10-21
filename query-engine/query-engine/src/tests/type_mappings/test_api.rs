@@ -1,6 +1,7 @@
 use super::super::test_api::QueryEngine;
 use crate::context::PrismaContext;
 use quaint::{prelude::Queryable, single::Quaint};
+use test_setup::TestAPIArgs;
 
 pub type TestResult = anyhow::Result<()>;
 
@@ -38,10 +39,12 @@ impl TestApi {
             .await
             .map_err(|err| anyhow::anyhow!("{:?}", err.data))?;
 
-        let dml = datamodel::parse_datamodel(&introspection_result.datamodel).unwrap();
+        let dml = datamodel::parse_datamodel(&introspection_result.datamodel)
+            .unwrap()
+            .subject;
         let config = datamodel::parse_configuration(&introspection_result.datamodel).unwrap();
 
-        let context = PrismaContext::builder(config, dml.clone())
+        let context = PrismaContext::builder(config.subject, dml.clone())
             .enable_raw_queries(true)
             .build()
             .await
@@ -84,7 +87,7 @@ impl<'a> ModelAssertions<'a> {
     pub fn assert_field_type(self, name: &str, r#type: datamodel::dml::ScalarType) -> anyhow::Result<Self> {
         let field = self
             .0
-            .find_field(name)
+            .find_scalar_field(name)
             .ok_or_else(|| anyhow::anyhow!("Assertion error: could not find field {}", name))?;
 
         anyhow::ensure!(
@@ -101,7 +104,7 @@ impl<'a> ModelAssertions<'a> {
     pub fn assert_field_enum_type(self, name: &str, enum_name: &str) -> anyhow::Result<Self> {
         let field = self
             .0
-            .find_field(name)
+            .find_scalar_field(name)
             .ok_or_else(|| anyhow::anyhow!("Assertion error: could not find field {}", name))?;
 
         anyhow::ensure!(
@@ -116,8 +119,8 @@ impl<'a> ModelAssertions<'a> {
     }
 }
 
-pub async fn mysql_8_test_api(db_name: &str) -> TestApi {
-    let mysql_url = test_setup::mysql_8_url(db_name);
+pub async fn mysql_8_test_api(args: TestAPIArgs) -> TestApi {
+    let mysql_url = test_setup::mysql_8_url(args.test_function_name);
 
     test_setup::create_mysql_database(&mysql_url.parse().unwrap())
         .await
@@ -131,8 +134,8 @@ pub async fn mysql_8_test_api(db_name: &str) -> TestApi {
     }
 }
 
-pub async fn mysql_5_6_test_api(db_name: &str) -> TestApi {
-    let mysql_url = test_setup::mysql_5_6_url(db_name);
+pub async fn mysql_5_6_test_api(args: TestAPIArgs) -> TestApi {
+    let mysql_url = test_setup::mysql_5_6_url(args.test_function_name);
 
     test_setup::create_mysql_database(&mysql_url.parse().unwrap())
         .await
@@ -146,8 +149,8 @@ pub async fn mysql_5_6_test_api(db_name: &str) -> TestApi {
     }
 }
 
-pub async fn mysql_test_api(db_name: &str) -> TestApi {
-    let mysql_url = test_setup::mysql_url(db_name);
+pub async fn mysql_test_api(args: TestAPIArgs) -> TestApi {
+    let mysql_url = test_setup::mysql_url(args.test_function_name);
 
     test_setup::create_mysql_database(&mysql_url.parse().unwrap())
         .await
@@ -161,8 +164,8 @@ pub async fn mysql_test_api(db_name: &str) -> TestApi {
     }
 }
 
-pub async fn mysql_mariadb_test_api(db_name: &str) -> TestApi {
-    let mysql_url = test_setup::mariadb_url(db_name);
+pub async fn mysql_mariadb_test_api(args: TestAPIArgs) -> TestApi {
+    let mysql_url = test_setup::mariadb_url(args.test_function_name);
 
     test_setup::create_mysql_database(&mysql_url.parse().unwrap())
         .await
@@ -176,8 +179,8 @@ pub async fn mysql_mariadb_test_api(db_name: &str) -> TestApi {
     }
 }
 
-pub async fn postgres_test_api(db_name: &str) -> TestApi {
-    let postgres_url = test_setup::postgres_10_url(db_name);
+pub async fn postgres_test_api(args: TestAPIArgs) -> TestApi {
+    let postgres_url = test_setup::postgres_10_url(args.test_function_name);
 
     test_setup::create_postgres_database(&postgres_url.parse().unwrap())
         .await
@@ -191,8 +194,8 @@ pub async fn postgres_test_api(db_name: &str) -> TestApi {
     }
 }
 
-pub async fn postgres9_test_api(db_name: &str) -> TestApi {
-    let postgres_url = test_setup::postgres_9_url(db_name);
+pub async fn postgres9_test_api(args: TestAPIArgs) -> TestApi {
+    let postgres_url = test_setup::postgres_9_url(args.test_function_name);
 
     test_setup::create_postgres_database(&postgres_url.parse().unwrap())
         .await
@@ -206,8 +209,8 @@ pub async fn postgres9_test_api(db_name: &str) -> TestApi {
     }
 }
 
-pub async fn postgres11_test_api(db_name: &str) -> TestApi {
-    let postgres_url = test_setup::postgres_11_url(db_name);
+pub async fn postgres11_test_api(args: TestAPIArgs) -> TestApi {
+    let postgres_url = test_setup::postgres_11_url(args.test_function_name);
 
     test_setup::create_postgres_database(&postgres_url.parse().unwrap())
         .await
@@ -221,8 +224,8 @@ pub async fn postgres11_test_api(db_name: &str) -> TestApi {
     }
 }
 
-pub async fn postgres12_test_api(db_name: &str) -> TestApi {
-    let postgres_url = test_setup::postgres_12_url(db_name);
+pub async fn postgres12_test_api(args: TestAPIArgs) -> TestApi {
+    let postgres_url = test_setup::postgres_12_url(args.test_function_name);
 
     test_setup::create_postgres_database(&postgres_url.parse().unwrap())
         .await
@@ -233,5 +236,44 @@ pub async fn postgres12_test_api(db_name: &str) -> TestApi {
         connection: Quaint::new(&postgres_url).await.unwrap(),
         database_string: postgres_url,
         provider: "postgres",
+    }
+}
+
+pub async fn postgres13_test_api(args: TestAPIArgs) -> TestApi {
+    let postgres_url = test_setup::postgres_13_url(args.test_function_name);
+
+    test_setup::create_postgres_database(&postgres_url.parse().unwrap())
+        .await
+        .unwrap();
+
+    TestApi {
+        connector_name: "postgres13",
+        connection: Quaint::new(&postgres_url).await.unwrap(),
+        database_string: postgres_url,
+        provider: "postgres",
+    }
+}
+
+pub async fn _mssql_2017_test_api(args: TestAPIArgs) -> TestApi {
+    let url = test_setup::mssql_2019_url(args.test_function_name);
+    test_setup::create_mssql_database(&url).await.unwrap();
+
+    TestApi {
+        connector_name: "mssql2019",
+        connection: Quaint::new(&url).await.unwrap(),
+        database_string: url,
+        provider: "sqlserver",
+    }
+}
+
+pub async fn _mssql_2019_test_api(args: TestAPIArgs) -> TestApi {
+    let url = test_setup::mssql_2019_url(args.test_function_name);
+    test_setup::create_mssql_database(&url).await.unwrap();
+
+    TestApi {
+        connector_name: "mssql2019",
+        connection: Quaint::new(&url).await.unwrap(),
+        database_string: url,
+        provider: "sqlserver",
     }
 }

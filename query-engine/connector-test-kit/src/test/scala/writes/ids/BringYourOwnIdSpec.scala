@@ -24,7 +24,7 @@ class BringYourOwnIdSpec extends FlatSpec with Matchers with ApiSpecBase with Sc
 
       val errorTarget = () match {
         case _ if connectorTag == ConnectorTag.MySqlConnectorTag => "constraint: `PRIMARY`"
-        case _ => "fields: (`id`)"
+        case _                                                   => "fields: (`id`)"
       }
 
       server.queryThatMustFail(
@@ -66,7 +66,7 @@ class BringYourOwnIdSpec extends FlatSpec with Matchers with ApiSpecBase with Sc
          |}""",
         project = project,
         errorCode = 2009,
-        errorContains = """↳ createParent (field)\n    ↳ data (argument)\n      ↳ ParentCreateInput (object)\n        ↳ id (field)\n          ↳ Value types mismatch. Have: Boolean(true), want: Scalar(String)"""
+        errorContains = """`Value types mismatch. Have: Boolean(true), want: String` at `Mutation.createParent.data.ParentCreateInput.id`"""
       )
     }
   }
@@ -103,7 +103,7 @@ class BringYourOwnIdSpec extends FlatSpec with Matchers with ApiSpecBase with Sc
 
       val constraintTarget = () match {
         case _ if connectorTag == ConnectorTag.MySqlConnectorTag => "constraint: `PRIMARY`"
-        case _ => "fields: (`id`)"
+        case _                                                   => "fields: (`id`)"
       }
 
       server.queryThatMustFail(
@@ -143,7 +143,7 @@ class BringYourOwnIdSpec extends FlatSpec with Matchers with ApiSpecBase with Sc
          |upsertParent(
          |    where: {id: "Does not exist"}
          |    create: {p: "Parent 2", id: "Own Id"}
-         |    update: {p: "Parent 2"}
+         |    update: {p: { set: "Parent 2"} }
          |    )
          |  {p, id}
          |}""",
@@ -164,7 +164,7 @@ class BringYourOwnIdSpec extends FlatSpec with Matchers with ApiSpecBase with Sc
          |upsertParent(
          |    where: {id: "Does not exist"}
          |    create: {p: "Parent 2", id: "Way way too long for a proper id"}
-         |    update: {p: "Parent 2"}
+         |    update: {p: { set: "Parent 2" }}
          |    )
          |  {p, id}
          |}""",
@@ -196,7 +196,7 @@ class BringYourOwnIdSpec extends FlatSpec with Matchers with ApiSpecBase with Sc
          |    data: {
          |        childOpt: {upsert:{
          |              create:{ id: "Own Id 3", c: "test 3"}
-         |              update:{ c: "Does not matter"}
+         |              update:{ c: { set: "Does not matter" } }
          |        }}
          |      }
          |    )

@@ -1,7 +1,9 @@
 use super::*;
-use quaint::prelude::Queryable;
-use std::collections::{BTreeMap, HashMap};
-use std::{borrow::Cow, sync::Arc};
+use native_types::{MySqlType, NativeType};
+use quaint::{prelude::Queryable, single::Quaint, Value};
+use serde_json::from_str;
+use std::borrow::Cow;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use tracing::debug;
 
 fn is_mariadb(version: &str) -> bool {
@@ -24,7 +26,7 @@ impl Flavour {
 }
 
 pub struct SqlSchemaDescriber {
-    conn: Arc<dyn Queryable + Send + Sync + 'static>,
+    conn: Quaint,
 }
 
 #[async_trait::async_trait]
@@ -53,9 +55,9 @@ impl super::SqlSchemaDescriberBackend for SqlSchemaDescriber {
 
         let table_names = self.get_table_names(schema).await;
         let mut tables = Vec::with_capacity(table_names.len());
-        let mut columns = get_all_columns(self.conn.as_ref(), schema, &flavour).await;
-        let mut indexes = get_all_indexes(self.conn.as_ref(), schema).await;
-        let mut fks = get_foreign_keys(self.conn.as_ref(), schema).await;
+        let mut columns = get_all_columns(&self.conn, schema, &flavour).await;
+        let mut indexes = get_all_indexes(&self.conn, schema).await;
+        let mut fks = get_foreign_keys(&self.conn, schema).await;
 
         let mut enums = vec![];
         for table_name in &table_names {
@@ -70,11 +72,16 @@ impl super::SqlSchemaDescriberBackend for SqlSchemaDescriber {
             sequences: vec![],
         })
     }
+
+    async fn version(&self, schema: &str) -> crate::SqlSchemaDescriberResult<Option<String>> {
+        debug!("getting db version '{}'", schema);
+        Ok(self.conn.version().await.unwrap())
+    }
 }
 
 impl SqlSchemaDescriber {
     /// Constructor.
-    pub fn new(conn: Arc<dyn Queryable + Send + Sync + 'static>) -> SqlSchemaDescriber {
+    pub fn new(conn: Quaint) -> SqlSchemaDescriber {
         SqlSchemaDescriber { conn }
     }
 
@@ -182,15 +189,17 @@ async fn get_all_columns(
                 column_name column_name,
                 data_type data_type,
                 column_type full_data_type,
-                character_maximum_length character_maximum_length, 
+                character_maximum_length character_maximum_length,
+                numeric_precision numeric_precision,
+                numeric_scale numeric_scale,
+                datetime_precision datetime_precision,
                 column_default column_default,
                 is_nullable is_nullable,
                 extra extra,
                 table_name table_name
             FROM information_schema.columns
             WHERE table_schema = ?
-            ORDER BY column_name
-            COLLATE utf8_general_ci
+            ORDER BY ordinal_position
         ";
 
     let mut map = HashMap::new();
@@ -215,7 +224,7 @@ async fn get_all_columns(
             .get("full_data_type")
             .and_then(|x| x.to_string())
             .expect("get full_data_type aka column_type");
-        let character_maximum_length = col.get("character_maximum_length").and_then(|x| x.as_i64());
+
         let is_nullable = col
             .get("is_nullable")
             .and_then(|x| x.to_string())
@@ -233,23 +242,39 @@ async fn get_all_columns(
             ColumnArity::Nullable
         };
 
+        let character_maximum_length = col
+            .get("character_maximum_length")
+            .and_then(|x| x.as_i64().map(|x| x as u32));
+        let numeric_precision = col.get("numeric_precision").and_then(|x| x.as_i64().map(|x| x as u32));
+
+        let numeric_scale = col.get("numeric_scale").and_then(|x| x.as_i64().map(|x| x as u32));
+        let time_precision = col.get("datetime_precision").and_then(|x| x.as_i64().map(|x| x as u32));
+
+        let precision = Precision {
+            character_maximum_length,
+            numeric_precision,
+            numeric_precision_radix: None,
+            numeric_scale,
+            time_precision,
+        };
+
+        let default_value = col.get("column_default");
+
         let (tpe, enum_option) = get_column_type_and_enum(
             &table_name,
             &name,
             &data_type,
             &full_data_type,
-            character_maximum_length,
+            precision,
             arity,
+            default_value,
         );
         let extra = col
             .get("extra")
             .and_then(|x| x.to_string())
             .expect("get extra")
             .to_lowercase();
-        let auto_increment = match extra.as_str() {
-            "auto_increment" => true,
-            _ => false,
-        };
+        let auto_increment = matches!(extra.as_str(), "auto_increment");
 
         let entry = map.entry(table_name).or_insert((Vec::new(), Vec::new()));
 
@@ -257,7 +282,7 @@ async fn get_all_columns(
             entry.1.push(enm);
         }
 
-        let default = match col.get("column_default") {
+        let default = match default_value {
             None => None,
             Some(param_value) => match param_value.to_string() {
                 None => None,
@@ -272,6 +297,10 @@ async fn get_all_columns(
                             Some(float_value) => DefaultValue::VALUE(float_value),
                             None => DefaultValue::DBGENERATED(default_string),
                         },
+                        ColumnTypeFamily::Decimal => match parse_float(&default_string) {
+                            Some(float_value) => DefaultValue::VALUE(float_value),
+                            None => DefaultValue::DBGENERATED(default_string),
+                        },
                         ColumnTypeFamily::Boolean => match parse_int(&default_string) {
                             Some(PrismaValue::Int(1)) => DefaultValue::VALUE(PrismaValue::Boolean(true)),
                             Some(PrismaValue::Int(0)) => DefaultValue::VALUE(PrismaValue::Boolean(false)),
@@ -281,23 +310,18 @@ async fn get_all_columns(
                             unescape_and_unquote_default_string(default_string, flavour),
                         )),
                         //todo check other now() definitions
-                        ColumnTypeFamily::DateTime => match default_string.to_lowercase()
-                            == "current_timestamp".to_string()
-                            || default_string.to_lowercase() == "current_timestamp()".to_string()
-                        {
+                        ColumnTypeFamily::DateTime => match default_is_current_timestamp(&default_string) {
                             true => DefaultValue::NOW,
-                            false => DefaultValue::DBGENERATED(default_string),
+                            _ => DefaultValue::DBGENERATED(default_string),
                         },
                         ColumnTypeFamily::Binary => DefaultValue::DBGENERATED(default_string),
                         ColumnTypeFamily::Json => DefaultValue::DBGENERATED(default_string),
+                        ColumnTypeFamily::Xml => DefaultValue::DBGENERATED(default_string),
                         ColumnTypeFamily::Uuid => DefaultValue::DBGENERATED(default_string),
-                        ColumnTypeFamily::Geometric => DefaultValue::DBGENERATED(default_string),
-                        ColumnTypeFamily::LogSequenceNumber => DefaultValue::DBGENERATED(default_string),
-                        ColumnTypeFamily::TextSearch => DefaultValue::DBGENERATED(default_string),
-                        ColumnTypeFamily::TransactionId => DefaultValue::DBGENERATED(default_string),
                         ColumnTypeFamily::Enum(_) => DefaultValue::VALUE(PrismaValue::Enum(unquote_string(
-                            default_string.replace("_utf8mb4", "").replace("\\\'", ""),
+                            &default_string.replace("_utf8mb4", "").replace("\\\'", ""),
                         ))),
+                        ColumnTypeFamily::Duration => DefaultValue::DBGENERATED(default_string),
                         ColumnTypeFamily::Unsupported(_) => DefaultValue::DBGENERATED(default_string),
                     })
                 }
@@ -322,6 +346,7 @@ async fn get_all_indexes(
     schema_name: &str,
 ) -> HashMap<String, (BTreeMap<String, Index>, Option<PrimaryKey>)> {
     let mut map = HashMap::new();
+    let mut indexes_with_expressions: HashSet<(String, String)> = HashSet::new();
 
     // We alias all the columns because MySQL column names are case-insensitive in queries, but the
     // information schema column names became upper-case in MySQL 8, causing the code fetching
@@ -337,7 +362,6 @@ async fn get_all_indexes(
             WHERE table_schema = ?
             ORDER BY index_name, seq_in_index
             ";
-    debug!("describing indices, SQL: {}", sql);
     let rows = conn
         .query_raw(sql, &[schema_name.into()])
         .await
@@ -346,59 +370,71 @@ async fn get_all_indexes(
     for row in rows {
         debug!("Got index row: {:#?}", row);
         let table_name = row.get("table_name").and_then(|x| x.to_string()).expect("table_name");
-        let seq_in_index = row.get("seq_in_index").and_then(|x| x.as_i64()).expect("seq_in_index");
-        let pos = seq_in_index - 1;
         let index_name = row.get("index_name").and_then(|x| x.to_string()).expect("index_name");
-        let is_unique = !row.get("non_unique").and_then(|x| x.as_bool()).expect("non_unique");
-        let column_name = row.get("column_name").and_then(|x| x.to_string()).expect("column_name");
+        match row.get("column_name").and_then(|x| x.to_string()) {
+            Some(column_name) => {
+                let seq_in_index = row.get("seq_in_index").and_then(|x| x.as_i64()).expect("seq_in_index");
+                let pos = seq_in_index - 1;
+                let is_unique = !row.get("non_unique").and_then(|x| x.as_bool()).expect("non_unique");
 
-        // Multi-column indices will return more than one row (with different column_name values).
-        // We cannot assume that one row corresponds to one index.
-        let (ref mut indexes_map, ref mut primary_key): &mut (_, Option<PrimaryKey>) =
-            map.entry(table_name).or_insert((BTreeMap::new(), None));
+                // Multi-column indices will return more than one row (with different column_name values).
+                // We cannot assume that one row corresponds to one index.
+                let (ref mut indexes_map, ref mut primary_key): &mut (_, Option<PrimaryKey>) = map
+                    .entry(table_name)
+                    .or_insert((BTreeMap::<String, Index>::new(), None));
 
-        let is_pk = index_name.to_lowercase() == "primary";
-        if is_pk {
-            debug!("Column '{}' is part of the primary key", column_name);
-            match primary_key {
-                Some(pk) => {
-                    if pk.columns.len() < (pos + 1) as usize {
-                        pk.columns.resize((pos + 1) as usize, "".to_string());
+                let is_pk = index_name.to_lowercase() == "primary";
+                if is_pk {
+                    debug!("Column '{}' is part of the primary key", column_name);
+                    match primary_key {
+                        Some(pk) => {
+                            if pk.columns.len() < (pos + 1) as usize {
+                                pk.columns.resize((pos + 1) as usize, "".to_string());
+                            }
+                            pk.columns[pos as usize] = column_name;
+                            debug!(
+                                "The primary key has already been created, added column to it: {:?}",
+                                pk.columns
+                            );
+                        }
+                        None => {
+                            debug!("Instantiating primary key");
+
+                            primary_key.replace(PrimaryKey {
+                                columns: vec![column_name],
+                                sequence: None,
+                                constraint_name: None,
+                            });
+                        }
+                    };
+                } else if indexes_map.contains_key(&index_name) {
+                    if let Some(index) = indexes_map.get_mut(&index_name) {
+                        index.columns.push(column_name);
                     }
-                    pk.columns[pos as usize] = column_name;
-                    debug!(
-                        "The primary key has already been created, added column to it: {:?}",
-                        pk.columns
-                    );
-                }
-                None => {
-                    debug!("Instantiating primary key");
-                    std::mem::replace(
-                        primary_key,
-                        Some(PrimaryKey {
+                } else {
+                    indexes_map.insert(
+                        index_name.clone(),
+                        Index {
+                            name: index_name,
                             columns: vec![column_name],
-                            sequence: None,
-                        }),
+                            tpe: match is_unique {
+                                true => IndexType::Unique,
+                                false => IndexType::Normal,
+                            },
+                        },
                     );
                 }
-            };
-        } else {
-            if indexes_map.contains_key(&index_name) {
-                indexes_map.get_mut(&index_name).map(|index: &mut Index| {
-                    index.columns.push(column_name);
-                });
-            } else {
-                indexes_map.insert(
-                    index_name.clone(),
-                    Index {
-                        name: index_name,
-                        columns: vec![column_name],
-                        tpe: match is_unique {
-                            true => IndexType::Unique,
-                            false => IndexType::Normal,
-                        },
-                    },
-                );
+            }
+            None => {
+                indexes_with_expressions.insert((table_name, index_name));
+            }
+        }
+    }
+
+    for (table, (index_map, _)) in &mut map {
+        for (tble, index_name) in &indexes_with_expressions {
+            if tble == table {
+                index_map.remove(index_name);
             }
         }
     }
@@ -427,7 +463,8 @@ async fn get_foreign_keys(conn: &dyn Queryable, schema_name: &str) -> HashMap<St
             kcu.referenced_column_name referenced_column_name,
             kcu.ordinal_position ordinal_position,
             kcu.table_name table_name,
-            rc.delete_rule delete_rule
+            rc.delete_rule delete_rule,
+            rc.update_rule update_rule
         FROM information_schema.key_column_usage AS kcu
         INNER JOIN information_schema.referential_constraints AS rc ON
         kcu.constraint_name = rc.constraint_name
@@ -437,8 +474,6 @@ async fn get_foreign_keys(conn: &dyn Queryable, schema_name: &str) -> HashMap<St
             AND referenced_column_name IS NOT NULL
         ORDER BY ordinal_position
     ";
-
-    debug!("describing table foreign keys, SQL: '{}'", sql);
 
     let result_set = conn
         .query_raw(sql, &[schema_name.into(), schema_name.into()])
@@ -483,7 +518,21 @@ async fn get_foreign_keys(conn: &dyn Queryable, schema_name: &str) -> HashMap<St
             "set default" => ForeignKeyAction::SetDefault,
             "restrict" => ForeignKeyAction::Restrict,
             "no action" => ForeignKeyAction::NoAction,
-            s @ _ => panic!(format!("Unrecognized on delete action '{}'", s)),
+            s => panic!(format!("Unrecognized on delete action '{}'", s)),
+        };
+        let on_update_action = match row
+            .get("update_rule")
+            .and_then(|x| x.to_string())
+            .expect("get update_rule")
+            .to_lowercase()
+            .as_str()
+        {
+            "cascade" => ForeignKeyAction::Cascade,
+            "set null" => ForeignKeyAction::SetNull,
+            "set default" => ForeignKeyAction::SetDefault,
+            "restrict" => ForeignKeyAction::Restrict,
+            "no action" => ForeignKeyAction::NoAction,
+            s => panic!(format!("Unrecognized on update action '{}'", s)),
         };
 
         let intermediate_fks = map.entry(table_name).or_default();
@@ -507,6 +556,7 @@ async fn get_foreign_keys(conn: &dyn Queryable, schema_name: &str) -> HashMap<St
                     referenced_table,
                     referenced_columns: vec![referenced_column],
                     on_delete_action,
+                    on_update_action,
                 };
                 intermediate_fks.insert(constraint_name, fk);
             }
@@ -529,59 +579,117 @@ fn get_column_type_and_enum(
     column_name: &str,
     data_type: &str,
     full_data_type: &str,
-    character_maximum_length: Option<i64>,
+    precision: Precision,
     arity: ColumnArity,
+    default: Option<&Value>,
 ) -> (ColumnType, Option<Enum>) {
-    let family = match (data_type, full_data_type) {
-        ("int", _) => ColumnTypeFamily::Int,
-        ("smallint", _) => ColumnTypeFamily::Int,
-        ("tinyint", "tinyint(1)") => ColumnTypeFamily::Boolean,
-        ("tinyint", _) => ColumnTypeFamily::Int,
-        ("mediumint", _) => ColumnTypeFamily::Int,
-        ("bigint", _) => ColumnTypeFamily::Int,
-        ("decimal", _) => ColumnTypeFamily::Float,
-        ("numeric", _) => ColumnTypeFamily::Float,
-        ("float", _) => ColumnTypeFamily::Float,
-        ("double", _) => ColumnTypeFamily::Float,
-        ("bit", _) => ColumnTypeFamily::Int,
-        ("date", _) => ColumnTypeFamily::DateTime,
-        ("time", _) => ColumnTypeFamily::DateTime,
-        ("datetime", _) => ColumnTypeFamily::DateTime,
-        ("timestamp", _) => ColumnTypeFamily::DateTime,
-        ("year", _) => ColumnTypeFamily::Int,
-        ("char", _) => ColumnTypeFamily::String,
-        ("varchar", _) => ColumnTypeFamily::String,
-        ("text", _) => ColumnTypeFamily::String,
-        ("tinytext", _) => ColumnTypeFamily::String,
-        ("mediumtext", _) => ColumnTypeFamily::String,
-        ("longtext", _) => ColumnTypeFamily::String,
-        ("enum", _) => ColumnTypeFamily::Enum(format!("{}_{}", table, column_name)),
-        // XXX: Is this correct?
-        ("set", _) => ColumnTypeFamily::String,
-        ("binary", _) => ColumnTypeFamily::Binary,
-        ("varbinary", _) => ColumnTypeFamily::Binary,
-        ("blob", _) => ColumnTypeFamily::Binary,
-        ("tinyblob", _) => ColumnTypeFamily::Binary,
-        ("mediumblob", _) => ColumnTypeFamily::Binary,
-        ("longblob", _) => ColumnTypeFamily::Binary,
-        ("geometry", _) => ColumnTypeFamily::Geometric,
-        ("point", _) => ColumnTypeFamily::Geometric,
-        ("linestring", _) => ColumnTypeFamily::Geometric,
-        ("polygon", _) => ColumnTypeFamily::Geometric,
-        ("multipoint", _) => ColumnTypeFamily::Geometric,
-        ("multilinestring", _) => ColumnTypeFamily::Geometric,
-        ("multipolygon", _) => ColumnTypeFamily::Geometric,
-        ("geometrycollection", _) => ColumnTypeFamily::Geometric,
-        ("json", _) => ColumnTypeFamily::Json,
-        (_, full_data_type) => ColumnTypeFamily::Unsupported(full_data_type.into()),
+    // println!("Name: {}", column_name);
+    // println!("DT: {}", data_type);
+    // println!("FDT: {}", full_data_type);
+    // println!("Precision: {:?}", precision);
+    // println!("Default: {:?}", default);
+
+    let is_tinyint1 = || extract_precision(full_data_type) == Some(1);
+    let invalid_bool_default = || {
+        default
+            .and_then(|default| default.to_string())
+            .filter(|default_string| default_string != "NULL")
+            .and_then(|default_string| parse_int(&default_string))
+            .filter(|default_int| *default_int != PrismaValue::Int(0) && *default_int != PrismaValue::Int(1))
+            .is_some()
+    };
+
+    let (family, native_type) = match data_type {
+        "int" => (ColumnTypeFamily::Int, Some(MySqlType::Int)),
+        "smallint" => (ColumnTypeFamily::Int, Some(MySqlType::SmallInt)),
+        "tinyint" if is_tinyint1() && !invalid_bool_default() => (ColumnTypeFamily::Boolean, Some(MySqlType::TinyInt)),
+        "tinyint" => (ColumnTypeFamily::Int, Some(MySqlType::TinyInt)),
+        "mediumint" => (ColumnTypeFamily::Int, Some(MySqlType::MediumInt)),
+        "bigint" => (ColumnTypeFamily::Int, Some(MySqlType::BigInt)),
+        "decimal" => (
+            ColumnTypeFamily::Decimal,
+            Some(MySqlType::Decimal(
+                precision.numeric_precision(),
+                precision.numeric_scale(),
+            )),
+        ),
+        "numeric" => (
+            ColumnTypeFamily::Decimal,
+            Some(MySqlType::Numeric(
+                precision.numeric_precision(),
+                precision.numeric_scale(),
+            )),
+        ),
+        "float" => (ColumnTypeFamily::Float, Some(MySqlType::Float)),
+        "double" => (ColumnTypeFamily::Float, Some(MySqlType::Double)),
+
+        "char" => (
+            ColumnTypeFamily::String,
+            Some(MySqlType::Char(precision.character_max_length())),
+        ),
+        "varchar" => (
+            ColumnTypeFamily::String,
+            Some(MySqlType::VarChar(precision.character_max_length())),
+        ),
+        "text" => (ColumnTypeFamily::String, Some(MySqlType::Text)),
+        "tinytext" => (ColumnTypeFamily::String, Some(MySqlType::TinyText)),
+        "mediumtext" => (ColumnTypeFamily::String, Some(MySqlType::MediumText)),
+        "longtext" => (ColumnTypeFamily::String, Some(MySqlType::LongText)),
+        "enum" => (ColumnTypeFamily::Enum(format!("{}_{}", table, column_name)), None),
+        "json" => (ColumnTypeFamily::Json, Some(MySqlType::JSON)),
+        "set" => (ColumnTypeFamily::String, None),
+        //temporal
+        "date" => (ColumnTypeFamily::DateTime, Some(MySqlType::Date)),
+        "time" => (
+            //Fixme this can either be a time or a duration -.-
+            ColumnTypeFamily::DateTime,
+            Some(MySqlType::Time(precision.time_precision())),
+        ),
+        "datetime" => (
+            ColumnTypeFamily::DateTime,
+            Some(MySqlType::DateTime(precision.time_precision())),
+        ),
+        "timestamp" => (
+            ColumnTypeFamily::DateTime,
+            Some(MySqlType::Timestamp(precision.time_precision())),
+        ),
+        "year" => (ColumnTypeFamily::Int, Some(MySqlType::Year)),
+        //01100010 01101001 01110100 01110011 00100110 01100010 01111001 01110100 01100101 01110011 00001010
+        "bit" => (
+            ColumnTypeFamily::Binary,
+            Some(MySqlType::Bit(precision.numeric_precision())),
+        ),
+        "binary" => (
+            ColumnTypeFamily::Binary,
+            Some(MySqlType::Binary(precision.character_max_length())),
+        ),
+        "varbinary" => (
+            ColumnTypeFamily::Binary,
+            Some(MySqlType::VarBinary(precision.character_max_length())),
+        ),
+        "blob" => (ColumnTypeFamily::Binary, Some(MySqlType::Blob)),
+        "tinyblob" => (ColumnTypeFamily::Binary, Some(MySqlType::TinyBlob)),
+        "mediumblob" => (ColumnTypeFamily::Binary, Some(MySqlType::MediumBlob)),
+        "longblob" => (ColumnTypeFamily::Binary, Some(MySqlType::LongBlob)),
+        //spatial
+        "geometry" => (ColumnTypeFamily::Unsupported(full_data_type.into()), None),
+        "point" => (ColumnTypeFamily::Unsupported(full_data_type.into()), None),
+        "linestring" => (ColumnTypeFamily::Unsupported(full_data_type.into()), None),
+        "polygon" => (ColumnTypeFamily::Unsupported(full_data_type.into()), None),
+        "multipoint" => (ColumnTypeFamily::Unsupported(full_data_type.into()), None),
+        "multilinestring" => (ColumnTypeFamily::Unsupported(full_data_type.into()), None),
+        "multipolygon" => (ColumnTypeFamily::Unsupported(full_data_type.into()), None),
+        "geometrycollection" => (ColumnTypeFamily::Unsupported(full_data_type.into()), None),
+        _ => (ColumnTypeFamily::Unsupported(full_data_type.into()), None),
     };
 
     let tpe = ColumnType {
         data_type: data_type.to_owned(),
         full_data_type: full_data_type.to_owned(),
-        character_maximum_length,
+        character_maximum_length: precision.character_maximum_length,
         family: family.clone(),
         arity,
+        native_type: native_type.map(|x| x.to_json()),
     };
 
     match &family {
@@ -596,10 +704,16 @@ fn get_column_type_and_enum(
     }
 }
 
+fn extract_precision(input: &str) -> Option<u32> {
+    static RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#".*\(([1-9])\)"#).unwrap());
+    RE.captures(input)
+        .and_then(|cap| cap.get(1).map(|precision| from_str::<u32>(precision.as_str()).unwrap()))
+}
+
 fn extract_enum_values(full_data_type: &&str) -> Vec<String> {
     let len = &full_data_type.len() - 1;
     let vals = &full_data_type[5..len];
-    vals.split(",").map(|v| unquote_string(v.into())).collect()
+    vals.split(',').map(|v| unquote_string(v)).collect()
 }
 
 // See https://dev.mysql.com/doc/refman/8.0/en/string-literals.html
@@ -607,8 +721,8 @@ fn extract_enum_values(full_data_type: &&str) -> Vec<String> {
 // In addition, MariaDB will return string literals with the quotes and extra backslashes around
 // control characters like `\n`.
 fn unescape_and_unquote_default_string(default: String, flavour: &Flavour) -> String {
-    const MYSQL_ESCAPING_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"\\('|\\[^\\])|'(')"#).unwrap());
-    const MARIADB_NEWLINE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"\\n"#).unwrap());
+    static MYSQL_ESCAPING_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"\\('|\\[^\\])|'(')"#).unwrap());
+    static MARIADB_NEWLINE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"\\n"#).unwrap());
 
     let maybe_unquoted: Cow<str> = if matches!(flavour, Flavour::MariaDb) {
         let unquoted: &str = &default[1..(default.len() - 1)];
@@ -619,4 +733,12 @@ fn unescape_and_unquote_default_string(default: String, flavour: &Flavour) -> St
     };
 
     MYSQL_ESCAPING_RE.replace_all(maybe_unquoted.as_ref(), "$1$2").into()
+}
+
+/// Tests whether an introspected default value should be categorized as current_timestamp.
+fn default_is_current_timestamp(default_str: &str) -> bool {
+    static MYSQL_CURRENT_TIMESTAMP_RE: Lazy<Regex> =
+        Lazy::new(|| Regex::new(r#"(?i)current_timestamp(\([0-9]*\))?"#).unwrap());
+
+    MYSQL_CURRENT_TIMESTAMP_RE.is_match(default_str)
 }

@@ -32,6 +32,10 @@ dev-postgres12:
 	docker-compose -f docker-compose.yml up -d --remove-orphans postgres12
 	echo 'postgres12' > current_connector
 
+dev-postgres13:
+	docker-compose -f docker-compose.yml up -d --remove-orphans postgres13
+	echo 'postgres13' > current_connector
+
 dev-pgbouncer:
 	docker-compose -f docker-compose.yml up -d --remove-orphans pgbouncer postgres11
 	echo 'pgbouncer' > current_connector
@@ -51,6 +55,14 @@ dev-mysql8:
 dev-mariadb:
 	docker-compose -f docker-compose.yml up -d --remove-orphans mariadb-10-0
 	echo 'mariadb' > current_connector
+
+dev-mssql2019:
+	docker-compose -f docker-compose.yml up -d --remove-orphans mssql-2019
+	echo 'mssql2019' > current_connector
+
+dev-mssql2017:
+	docker-compose -f docker-compose.yml up -d --remove-orphans mssql-2017
+	echo 'mssql2017' > current_connector
 
 dev-down:
 	docker-compose -f docker-compose.yml down -v --remove-orphans

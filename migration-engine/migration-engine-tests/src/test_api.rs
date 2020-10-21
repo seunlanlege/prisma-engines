@@ -1,14 +1,28 @@
 mod apply;
+mod apply_migrations;
 mod calculate_database_steps;
+mod create_migration;
+mod diagnose_migration_history;
+mod evaluate_data_loss;
 mod infer;
 mod infer_apply;
+mod reset;
+mod schema_push;
 mod unapply_migration;
 
 pub use apply::Apply;
+pub use apply_migrations::ApplyMigrations;
 pub use calculate_database_steps::CalculateDatabaseSteps;
+pub use create_migration::CreateMigration;
+pub use diagnose_migration_history::DiagnoseMigrationHistory;
+pub use evaluate_data_loss::EvaluateDataLoss;
 pub use infer::Infer;
 pub use infer_apply::InferApply;
+pub use reset::Reset;
+pub use schema_push::SchemaPush;
 pub use unapply_migration::UnapplyMigration;
+
+use crate::AssertionResult;
 
 use super::assertions::SchemaAssertion;
 use super::{
@@ -16,15 +30,22 @@ use super::{
     sql::barrel_migration_executor::BarrelMigrationExecutor,
     InferAndApplyOutput,
 };
-use migration_connector::{MigrationPersistence, MigrationStep};
+use crate::connectors::Tags;
+use enumflags2::BitFlags;
+use migration_connector::{
+    ImperativeMigrationsPersistence, MigrationConnector, MigrationPersistence, MigrationRecord, MigrationStep,
+};
 use migration_core::{
     api::{GenericApi, MigrationApi},
     commands::ApplyMigrationInput,
 };
-use quaint::prelude::{ConnectionInfo, Queryable, SqlFamily};
-use sql_migration_connector::MIGRATION_TABLE_NAME;
+use quaint::{
+    prelude::{ConnectionInfo, Queryable, SqlFamily},
+    single::Quaint,
+};
+use sql_migration_connector::{sql_migration::SqlMigration, SqlMigrationConnector, MIGRATION_TABLE_NAME};
 use sql_schema_describer::*;
-use std::sync::Arc;
+use tempfile::TempDir;
 use test_setup::*;
 
 /// A handle to all the context needed for end-to-end testing of the migration engine across
@@ -32,9 +53,9 @@ use test_setup::*;
 pub struct TestApi {
     /// More precise than SqlFamily.
     connector_name: &'static str,
-    database: Arc<dyn Queryable + Send + Sync + 'static>,
-    api: MigrationApi<sql_migration_connector::SqlMigrationConnector, sql_migration_connector::SqlMigration>,
-    connection_info: ConnectionInfo,
+    database: Quaint,
+    api: MigrationApi<SqlMigrationConnector, SqlMigration>,
+    tags: BitFlags<Tags>,
 }
 
 impl TestApi {
@@ -43,31 +64,39 @@ impl TestApi {
     }
 
     pub fn schema_name(&self) -> &str {
-        self.connection_info.schema_name()
+        self.connection_info().schema_name()
     }
 
-    pub fn database(&self) -> &Arc<dyn Queryable + Send + Sync + 'static> {
+    pub fn database(&self) -> &Quaint {
         &self.database
     }
 
     pub fn is_sqlite(&self) -> bool {
-        self.sql_family() == SqlFamily::Sqlite
+        self.tags.contains(Tags::Sqlite)
     }
 
     pub fn is_mysql(&self) -> bool {
-        self.sql_family() == SqlFamily::Mysql
+        self.tags.contains(Tags::Mysql)
+    }
+
+    pub fn is_mysql_8(&self) -> bool {
+        self.connector_name == "mysql_8"
     }
 
     pub fn is_mariadb(&self) -> bool {
         self.connector_name == "mysql_mariadb"
     }
 
-    pub fn migration_persistence<'a>(&'a self) -> Box<dyn MigrationPersistence + 'a> {
-        self.api.migration_persistence()
+    pub fn migration_persistence(&self) -> &dyn MigrationPersistence {
+        self.api.connector().migration_persistence()
+    }
+
+    pub fn imperative_migration_persistence<'a>(&'a self) -> &(dyn ImperativeMigrationsPersistence + 'a) {
+        self.api.connector()
     }
 
     pub fn connection_info(&self) -> &ConnectionInfo {
-        &self.connection_info
+        &self.database.connection_info()
     }
 
     pub fn sql_family(&self) -> SqlFamily {
@@ -79,13 +108,22 @@ impl TestApi {
             SqlFamily::Mysql => mysql_test_config("unreachable"),
             SqlFamily::Postgres => postgres_12_test_config("unreachable"),
             SqlFamily::Sqlite => sqlite_test_config("unreachable"),
-            SqlFamily::Mssql => todo!("Greetings from Redmond"),
+            SqlFamily::Mssql => mssql_2019_test_config("unreachable"),
         }
     }
 
     /// Render a table name with the required prefixing for use with quaint query building.
-    pub fn render_table_name<'a>(&self, table_name: &'a str) -> quaint::ast::Table<'a> {
-        (self.schema_name().to_owned(), table_name.to_owned()).into()
+    pub fn render_table_name<'a>(&'a self, table_name: &'a str) -> quaint::ast::Table<'a> {
+        if self.is_sqlite() {
+            table_name.into()
+        } else {
+            (self.connection_info().schema_name(), table_name).into()
+        }
+    }
+
+    /// Create a temporary directory to serve as a test migrations directory.
+    pub fn create_migrations_directory(&self) -> anyhow::Result<TempDir> {
+        Ok(tempfile::tempdir()?)
     }
 
     pub async fn apply_migration(&self, steps: Vec<MigrationStep>, migration_id: &str) -> InferAndApplyOutput {
@@ -111,8 +149,42 @@ impl TestApi {
         }
     }
 
+    pub fn apply_migrations<'a>(&'a self, migrations_directory: &'a TempDir) -> ApplyMigrations<'a> {
+        ApplyMigrations::new(&self.api, migrations_directory)
+    }
+
+    /// Convenient builder and assertions for the CreateMigration command.
+    pub fn create_migration<'a>(
+        &'a self,
+        name: &'a str,
+        prisma_schema: &'a str,
+        migrations_directory: &'a TempDir,
+    ) -> CreateMigration<'a> {
+        CreateMigration::new(&self.api, name, prisma_schema, migrations_directory)
+    }
+
+    /// Builder and assertions to call the DiagnoseMigrationHistory command.
+    pub fn diagnose_migration_history<'a>(&'a self, migrations_directory: &'a TempDir) -> DiagnoseMigrationHistory<'a> {
+        DiagnoseMigrationHistory::new(&self.api, migrations_directory)
+    }
+
     pub fn infer_apply<'a>(&'a self, schema: &'a str) -> InferApply<'a> {
         InferApply::new(&self.api, schema)
+    }
+
+    pub async fn infer_and_apply_forcefully(&self, schema: &str) -> InferAndApplyOutput {
+        let migration_output = self
+            .infer_apply(schema)
+            .force(Some(true))
+            .send()
+            .await
+            .unwrap()
+            .into_inner();
+
+        InferAndApplyOutput {
+            migration_output,
+            sql_schema: self.describe_database().await.unwrap(),
+        }
     }
 
     pub async fn infer_and_apply(&self, schema: &str) -> InferAndApplyOutput {
@@ -124,19 +196,35 @@ impl TestApi {
         }
     }
 
-    pub fn infer<'a>(&'a self, dm: impl Into<String>) -> Infer<'a> {
+    pub fn infer(&self, dm: impl Into<String>) -> Infer<'_> {
         Infer::new(&self.api, dm)
     }
 
-    pub fn apply<'a>(&'a self) -> Apply<'a> {
+    pub fn apply(&self) -> Apply<'_> {
         Apply::new(&self.api)
     }
 
-    pub fn unapply_migration<'a>(&'a self) -> UnapplyMigration<'a> {
+    pub fn unapply_migration(&self) -> UnapplyMigration<'_> {
         UnapplyMigration {
             api: &self.api,
             force: None,
         }
+    }
+
+    pub fn evaluate_data_loss<'a>(
+        &'a self,
+        migrations_directory: &'a TempDir,
+        prisma_schema: impl Into<String>,
+    ) -> EvaluateDataLoss<'a> {
+        EvaluateDataLoss::new(&self.api, migrations_directory, prisma_schema.into())
+    }
+
+    pub fn reset(&self) -> Reset<'_> {
+        Reset::new(&self.api)
+    }
+
+    pub fn schema_push(&self, dm: impl Into<String>) -> SchemaPush<'_> {
+        SchemaPush::new(&self.api, dm.into())
     }
 
     pub fn barrel(&self) -> BarrelMigrationExecutor<'_> {
@@ -146,27 +234,13 @@ impl TestApi {
                 SqlFamily::Mysql => barrel::SqlVariant::Mysql,
                 SqlFamily::Postgres => barrel::SqlVariant::Pg,
                 SqlFamily::Sqlite => barrel::SqlVariant::Sqlite,
-                SqlFamily::Mssql => todo!("Greetings from Redmond"),
+                SqlFamily::Mssql => barrel::SqlVariant::Mssql,
             },
         }
     }
 
-    fn describer(&self) -> Box<dyn SqlSchemaDescriberBackend> {
-        let db = Arc::clone(&self.database);
-        match self.api.connector_type() {
-            "postgresql" => Box::new(sql_schema_describer::postgres::SqlSchemaDescriber::new(db)),
-            "sqlite" => Box::new(sql_schema_describer::sqlite::SqlSchemaDescriber::new(db)),
-            "mysql" => Box::new(sql_schema_describer::mysql::SqlSchemaDescriber::new(db)),
-            _ => unimplemented!(),
-        }
-    }
-
     pub async fn describe_database(&self) -> Result<SqlSchema, anyhow::Error> {
-        let mut result = self
-            .describer()
-            .describe(self.schema_name())
-            .await
-            .expect("Description failed");
+        let mut result = self.api.connector().describe_schema().await?;
 
         // the presence of the _Migration table makes assertions harder. Therefore remove it from the result.
         result.tables = result
@@ -180,7 +254,6 @@ impl TestApi {
 
     pub async fn assert_schema(&self) -> Result<SchemaAssertion, anyhow::Error> {
         let schema = self.describe_database().await?;
-
         Ok(SchemaAssertion(schema))
     }
 
@@ -205,7 +278,7 @@ impl TestApi {
         }
     }
 
-    pub fn calculate_database_steps<'a>(&'a self) -> CalculateDatabaseSteps<'a> {
+    pub fn calculate_database_steps(&self) -> CalculateDatabaseSteps<'_> {
         CalculateDatabaseSteps::new(&self.api)
     }
 }
@@ -239,6 +312,7 @@ impl<'a> TestApiSelect<'a> {
         self
     }
 
+    /// This is deprecated. Used row assertions instead with the ResultSetExt trait.
     pub async fn send_debug(self) -> Result<Vec<Vec<String>>, anyhow::Error> {
         let rows = self.send().await?;
 
@@ -255,118 +329,169 @@ impl<'a> TestApiSelect<'a> {
     }
 }
 
-pub async fn mysql_8_test_api(db_name: &str) -> TestApi {
+pub async fn mysql_8_test_api(args: TestAPIArgs) -> TestApi {
+    let db_name = args.test_function_name;
     let url = mysql_8_url(db_name);
-    let connection_info = ConnectionInfo::from_url(&url).unwrap();
     let connector = mysql_migration_connector(&url).await;
 
     TestApi {
         connector_name: "mysql_8",
-        connection_info,
-        database: Arc::clone(&connector.database),
+        database: connector.quaint().clone(),
         api: test_api(connector).await,
+        tags: args.test_tag,
     }
 }
 
-pub async fn mysql_5_6_test_api(db_name: &str) -> TestApi {
+pub async fn mysql_5_6_test_api(args: TestAPIArgs) -> TestApi {
+    let db_name = args.test_function_name;
     let url = mysql_5_6_url(db_name);
-    let connection_info = ConnectionInfo::from_url(&url).unwrap();
     let connector = mysql_migration_connector(&url).await;
 
     TestApi {
         connector_name: "mysql_5_6",
-        connection_info,
-        database: Arc::clone(&connector.database),
+        database: connector.quaint().clone(),
         api: test_api(connector).await,
+        tags: args.test_tag,
     }
 }
 
-pub async fn mysql_test_api(db_name: &str) -> TestApi {
+pub async fn mysql_test_api(args: TestAPIArgs) -> TestApi {
+    let db_name = args.test_function_name;
     let url = mysql_url(db_name);
-    let connection_info = ConnectionInfo::from_url(&url).unwrap();
     let connector = mysql_migration_connector(&url).await;
 
     TestApi {
         connector_name: "mysql",
-        connection_info,
-        database: Arc::clone(&connector.database),
+        database: connector.quaint().clone(),
         api: test_api(connector).await,
+        tags: args.test_tag,
     }
 }
 
-pub async fn mysql_mariadb_test_api(db_name: &str) -> TestApi {
+pub async fn mysql_mariadb_test_api(args: TestAPIArgs) -> TestApi {
+    let db_name = args.test_function_name;
     let url = mariadb_url(db_name);
-    let connection_info = ConnectionInfo::from_url(&url).unwrap();
     let connector = mysql_migration_connector(&url).await;
 
     TestApi {
         connector_name: "mysql_mariadb",
-        connection_info,
-        database: Arc::clone(&connector.database),
+        database: connector.quaint().clone(),
         api: test_api(connector).await,
+        tags: args.test_tag,
     }
 }
 
-pub async fn postgres9_test_api(db_name: &str) -> TestApi {
+pub async fn postgres9_test_api(args: TestAPIArgs) -> TestApi {
+    let db_name = args.test_function_name;
     let url = postgres_9_url(db_name);
-    let connection_info = ConnectionInfo::from_url(&url).unwrap();
     let connector = postgres_migration_connector(&url).await;
 
     TestApi {
         connector_name: "postgres9",
-        connection_info,
-        database: Arc::clone(&connector.database),
+        database: connector.quaint().clone(),
         api: test_api(connector).await,
+        tags: args.test_tag,
     }
 }
 
-pub async fn postgres_test_api(db_name: &str) -> TestApi {
+pub async fn postgres_test_api(args: TestAPIArgs) -> TestApi {
+    let db_name = args.test_function_name;
     let url = postgres_10_url(db_name);
-    let connection_info = ConnectionInfo::from_url(&url).unwrap();
     let connector = postgres_migration_connector(&url).await;
 
     TestApi {
         connector_name: "postgres",
-        connection_info,
-        database: Arc::clone(&connector.database),
+        database: connector.quaint().clone(),
         api: test_api(connector).await,
+        tags: args.test_tag,
     }
 }
 
-pub async fn postgres11_test_api(db_name: &str) -> TestApi {
+pub async fn postgres11_test_api(args: TestAPIArgs) -> TestApi {
+    let db_name = args.test_function_name;
     let url = postgres_11_url(db_name);
-    let connection_info = ConnectionInfo::from_url(&url).unwrap();
     let connector = postgres_migration_connector(&url).await;
 
     TestApi {
         connector_name: "postgres11",
-        connection_info,
-        database: Arc::clone(&connector.database),
+        database: connector.quaint().clone(),
         api: test_api(connector).await,
+        tags: args.test_tag,
     }
 }
 
-pub async fn postgres12_test_api(db_name: &str) -> TestApi {
-    let url = postgres_12_url(db_name);
-    let connection_info = ConnectionInfo::from_url(&url).unwrap();
+pub async fn postgres12_test_api(args: TestAPIArgs) -> TestApi {
+    let url = postgres_12_url(args.test_function_name);
     let connector = postgres_migration_connector(&url).await;
 
     TestApi {
         connector_name: "postgres12",
-        connection_info,
-        database: Arc::clone(&connector.database),
+        database: connector.quaint().clone(),
         api: test_api(connector).await,
+        tags: args.test_tag,
     }
 }
 
-pub async fn sqlite_test_api(db_name: &str) -> TestApi {
-    let connection_info = ConnectionInfo::from_url(&sqlite_test_url(db_name)).unwrap();
+pub async fn postgres13_test_api(args: TestAPIArgs) -> TestApi {
+    let url = postgres_13_url(args.test_function_name);
+    let connector = postgres_migration_connector(&url).await;
+
+    TestApi {
+        connector_name: "postgres13",
+        database: connector.quaint().clone(),
+        api: test_api(connector).await,
+        tags: args.test_tag,
+    }
+}
+
+pub async fn sqlite_test_api(args: TestAPIArgs) -> TestApi {
+    let db_name = args.test_function_name;
     let connector = sqlite_migration_connector(db_name).await;
 
     TestApi {
         connector_name: "sqlite",
-        connection_info,
-        database: Arc::clone(&connector.database),
+        database: connector.quaint().clone(),
         api: test_api(connector).await,
+        tags: args.test_tag,
+    }
+}
+
+pub trait MigrationsAssertions: Sized {
+    fn assert_checksum(self, expected: &str) -> AssertionResult<Self>;
+    fn assert_migration_name(self, expected: &str) -> AssertionResult<Self>;
+    fn assert_logs(self, expected: &str) -> AssertionResult<Self>;
+    fn assert_applied_steps_count(self, count: u32) -> AssertionResult<Self>;
+    fn assert_success(self) -> AssertionResult<Self>;
+}
+
+impl MigrationsAssertions for MigrationRecord {
+    fn assert_checksum(self, expected: &str) -> AssertionResult<Self> {
+        assert_eq!(self.checksum, expected);
+
+        Ok(self)
+    }
+
+    fn assert_migration_name(self, expected: &str) -> AssertionResult<Self> {
+        assert_eq!(&self.migration_name[15..], expected);
+
+        Ok(self)
+    }
+
+    fn assert_logs(self, expected: &str) -> AssertionResult<Self> {
+        assert_eq!(self.logs, expected);
+
+        Ok(self)
+    }
+
+    fn assert_applied_steps_count(self, count: u32) -> AssertionResult<Self> {
+        assert_eq!(self.applied_steps_count, count);
+
+        Ok(self)
+    }
+
+    fn assert_success(self) -> AssertionResult<Self> {
+        assert!(self.finished_at.is_some());
+
+        Ok(self)
     }
 }

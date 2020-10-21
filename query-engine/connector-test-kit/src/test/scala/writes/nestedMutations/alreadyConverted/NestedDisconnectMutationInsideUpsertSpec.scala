@@ -18,7 +18,9 @@ class NestedDisconnectMutationInsideUpsertSpec extends FlatSpec with Matchers wi
         .query(
           s"""mutation {
           |  createParent(data: {
-          |    p: "p1", p_1: "p", p_2: "1"
+          |    p: "p1"
+          |    p_1: "p"
+          |    p_2: "1"
           |    childOpt: {
           |      create: {
           |        c: "c1"
@@ -45,10 +47,10 @@ class NestedDisconnectMutationInsideUpsertSpec extends FlatSpec with Matchers wi
          |  upsertParent(
          |    where: $parentId
          |    update:{
-         |      p: "p2"
+         |      p: { set: "p2" }
          |      childOpt: {disconnect: true}
          |    }
-         |    create:{p: "Should not Matter"}
+         |    create:{p: "Should not Matter", p_1: "lol", p_2: "woot"}
          |  ){
          |    childOpt {
          |      c
@@ -100,11 +102,13 @@ class NestedDisconnectMutationInsideUpsertSpec extends FlatSpec with Matchers wi
          |  upsertParent(
          |  where: $parent1Id
          |  update:{
-         |    p: "p2"
+         |    p: { set: "p2" }
          |    childOpt: {disconnect: true}
          |  }
          |  create: {
          |    p:"Should not Matter"
+         |    p_1:"lol"
+         |    p_2:"woot"
          |  }
          |  ){
          |    childOpt {
@@ -133,7 +137,7 @@ class NestedDisconnectMutationInsideUpsertSpec extends FlatSpec with Matchers wi
         |  createParent(data: {
         |    p: "p1", p_1: "p", p_2: "1"
         |    childrenOpt: {
-        |      create: {c: "c1"}
+        |      create: {c: "c1", c_1: "foo", c_2: "bar"}
         |    }
         |  }){
         |    ${t.parent.selection}
@@ -153,7 +157,7 @@ class NestedDisconnectMutationInsideUpsertSpec extends FlatSpec with Matchers wi
          |    update:{
          |    childrenOpt: {disconnect: {c: "c1"}}
          |    }
-         |    create: {p: "Should not Matter"}
+         |    create: {p: "Should not Matter", p_1: "asd", p_2: "asdaf"}
          |  ){
          |    childrenOpt {
          |      c
@@ -181,7 +185,7 @@ class NestedDisconnectMutationInsideUpsertSpec extends FlatSpec with Matchers wi
         |  createParent(data: {
         |    p: "p1", p_1: "p", p_2: "1"
         |    childOpt: {
-        |      create: {c: "c1"}
+        |      create: {c: "c1", c_1: "foo", c_2: "bar"}
         |    }
         |  }){
         |    ${t.parent.selection}
@@ -201,7 +205,7 @@ class NestedDisconnectMutationInsideUpsertSpec extends FlatSpec with Matchers wi
          |  update:{
          |    childOpt: {disconnect: true}
          |  }
-         |  create: {p: "Should not Matter"}
+         |  create: {p: "Should not Matter", p_1: "foo", p_2: "bar"}
          |  ){
          |    childOpt {
          |      c
@@ -230,7 +234,7 @@ class NestedDisconnectMutationInsideUpsertSpec extends FlatSpec with Matchers wi
           |  createParent(data: {
           |    p: "p1", p_1: "p", p_2: "1"
           |    childrenOpt: {
-          |      create: [{c: "c1"}, {c: "c2"}]
+          |      create: [{c: "c1", c_1: "foo", c_2: "bar"}, {c: "c2", c_1: "qaw1", c_2: "qqw3"}]
           |    }
           |  }){
           |    ${t.parent.selection}
@@ -251,7 +255,7 @@ class NestedDisconnectMutationInsideUpsertSpec extends FlatSpec with Matchers wi
          |  update:{
          |    childrenOpt: {disconnect: [{c: "c2"}]}
          |  }
-         |  create: {p: "Should not Matter"}
+         |  create: {p: "Should not Matter", p_1: "foo", p_2: "bar"}
          |  ){
          |    childrenOpt {
          |      c
@@ -304,7 +308,7 @@ class NestedDisconnectMutationInsideUpsertSpec extends FlatSpec with Matchers wi
          |    update:{
          |    childOpt: {disconnect: true}
          |  }
-         |    create: {p: "Should not Matter"}
+         |    create: {p: "Should not Matter", p_1: "foo", p_2: "bar"}
          |  ){
          |    childOpt{
          |      c
@@ -334,7 +338,7 @@ class NestedDisconnectMutationInsideUpsertSpec extends FlatSpec with Matchers wi
         |  createParent(data: {
         |    p: "p1", p_1: "p", p_2: "1"
         |    childrenOpt: {
-        |      create: [{c: "c1"},{c: "c2"}]
+        |      create: [{c: "c1", c_1: "foo", c_2: "bar"},{c: "c2", c_1: "q124", c_2: "qawe"}]
         |    }
         |  }){
         |    ${t.parent.selection}
@@ -355,7 +359,7 @@ class NestedDisconnectMutationInsideUpsertSpec extends FlatSpec with Matchers wi
          |  update:{
          |    childrenOpt: {disconnect: [{c: "c1"}]}
          |  }
-         |  create: {p: "Should not Matter"}
+         |  create: {p: "Should not Matter", p_1: "foo", p_2: "bar"}
          |  ){
          |    childrenOpt{
          |      c
@@ -386,7 +390,7 @@ class NestedDisconnectMutationInsideUpsertSpec extends FlatSpec with Matchers wi
                         model Todo{
                             id       String    @id @default(cuid())
                             text     String?
-                            comments Comment[] $relationInlineDirective
+                            comments Comment[] $relationInlineAttribute
                         }"""
 
     val project = SchemaDsl.fromStringV11() { schema }
@@ -450,7 +454,7 @@ class NestedDisconnectMutationInsideUpsertSpec extends FlatSpec with Matchers wi
                         model Todo{
                             id       String    @id @default(cuid())
                             text     String?
-                            comments Comment[] $relationInlineDirective
+                            comments Comment[] $relationInlineAttribute
                         }"""
 
     val project = SchemaDsl.fromStringV11() { schema }
@@ -512,7 +516,7 @@ class NestedDisconnectMutationInsideUpsertSpec extends FlatSpec with Matchers wi
                         model Todo{
                             id       String    @id @default(cuid())
                             text     String?
-                            comments Comment[] $relationInlineDirective
+                            comments Comment[] $relationInlineAttribute
                         }"""
 
     val project = SchemaDsl.fromStringV11() { schema }
@@ -630,7 +634,7 @@ class NestedDisconnectMutationInsideUpsertSpec extends FlatSpec with Matchers wi
                         model Todo{
                             id       String    @id @default(cuid())
                             title    String?   @unique
-                            comments Comment[] $relationInlineDirective
+                            comments Comment[] $relationInlineAttribute
                         }"""
 
     val project = SchemaDsl.fromStringV11() { schema }
@@ -839,7 +843,8 @@ class NestedDisconnectMutationInsideUpsertSpec extends FlatSpec with Matchers wi
       """,
       project,
       errorCode = 2017,
-      errorContains = """Error occurred during query execution:\nInterpretationError(\"Error for binding \\'5\\': RecordsNotConnected { relation_name: \\\"UserFollows\\\", parent_name: \\\"User\\\", child_name: \\\"User\\\"""
+      errorContains =
+        """Error occurred during query execution:\nInterpretationError(\"Error for binding \\'5\\': RecordsNotConnected { relation_name: \\\"UserFollows\\\", parent_name: \\\"User\\\", child_name: \\\"User\\\"""
     )
   }
 
@@ -847,14 +852,14 @@ class NestedDisconnectMutationInsideUpsertSpec extends FlatSpec with Matchers wi
     val project = SchemaDsl.fromStringV11() { s"""model Top {
                                              |  id      String   @id @default(cuid())
                                              |  nameTop String   @unique
-                                             |  middles Middle[] $relationInlineDirective
+                                             |  middles Middle[] $relationInlineAttribute
                                              |}
                                              |
                                              |model Middle {
                                              |  id         String   @id @default(cuid())
                                              |  nameMiddle String   @unique
                                              |  tops       Top[]
-                                             |  bottoms    Bottom[] $relationInlineDirective
+                                             |  bottoms    Bottom[] $relationInlineAttribute
                                              |}
                                              |
                                              |model Bottom {
@@ -909,9 +914,9 @@ class NestedDisconnectMutationInsideUpsertSpec extends FlatSpec with Matchers wi
          |   }
          |  ) {
          |    nameTop
-         |    middles (orderBy: id_ASC){
+         |    middles (orderBy: { id: asc }){
          |      nameMiddle
-         |      bottoms (orderBy: id_ASC){
+         |      bottoms (orderBy: { id: asc }){
          |        nameBottom
          |      }
          |    }
@@ -924,7 +929,7 @@ class NestedDisconnectMutationInsideUpsertSpec extends FlatSpec with Matchers wi
     result.toString should be(
       """{"data":{"updateTop":{"nameTop":"updated top","middles":[{"nameMiddle":"updated middle","bottoms":[{"nameBottom":"the second bottom"}]},{"nameMiddle":"the second middle","bottoms":[{"nameBottom":"the third bottom"},{"nameBottom":"the fourth bottom"}]}]}}}""")
 
-    server.query("query{bottoms(orderBy: id_ASC){nameBottom}}", project).toString should be(
+    server.query("query{bottoms(orderBy: { id: asc }){nameBottom}}", project).toString should be(
       """{"data":{"bottoms":[{"nameBottom":"the bottom"},{"nameBottom":"the second bottom"},{"nameBottom":"the third bottom"},{"nameBottom":"the fourth bottom"}]}}""")
   }
 
@@ -932,13 +937,13 @@ class NestedDisconnectMutationInsideUpsertSpec extends FlatSpec with Matchers wi
     val project = SchemaDsl.fromStringV11() { s"""model Top {
                                              |  id      String   @id @default(cuid())
                                              |  nameTop String   @unique
-                                             |  middles Middle[] $relationInlineDirective
+                                             |  middles Middle[] $relationInlineAttribute
                                              |}
                                              |
                                              |model Middle {
                                              |  id         String @id @default(cuid())
                                              |  nameMiddle String @unique
-                                             |  bottoms    Bottom[] $relationInlineDirective
+                                             |  bottoms    Bottom[] $relationInlineAttribute
                                              |}
                                              |
                                              |model Bottom {
@@ -991,9 +996,9 @@ class NestedDisconnectMutationInsideUpsertSpec extends FlatSpec with Matchers wi
          |   }
          |  ) {
          |    nameTop
-         |    middles  (orderBy: id_ASC){
+         |    middles  (orderBy: { id: asc }){
          |      nameMiddle
-         |      bottoms  (orderBy: id_ASC){
+         |      bottoms  (orderBy: { id: asc }){
          |        nameBottom
          |      }
          |    }
@@ -1006,7 +1011,7 @@ class NestedDisconnectMutationInsideUpsertSpec extends FlatSpec with Matchers wi
     result.toString should be(
       """{"data":{"updateTop":{"nameTop":"updated top","middles":[{"nameMiddle":"updated middle","bottoms":[{"nameBottom":"the second bottom"}]},{"nameMiddle":"the second middle","bottoms":[{"nameBottom":"the third bottom"},{"nameBottom":"the fourth bottom"}]}]}}}""")
 
-    server.query("query{bottoms (orderBy: id_ASC){nameBottom}}", project).toString should be(
+    server.query("query{bottoms (orderBy: { id: asc }){nameBottom}}", project).toString should be(
       """{"data":{"bottoms":[{"nameBottom":"the bottom"},{"nameBottom":"the second bottom"},{"nameBottom":"the third bottom"},{"nameBottom":"the fourth bottom"}]}}""")
   }
 
@@ -1014,7 +1019,7 @@ class NestedDisconnectMutationInsideUpsertSpec extends FlatSpec with Matchers wi
     val project = SchemaDsl.fromStringV11() { s"""model Top {
                                              |  id      String   @id @default(cuid())
                                              |  nameTop String   @unique
-                                             |  middles Middle[] $relationInlineDirective
+                                             |  middles Middle[] $relationInlineAttribute
                                              |}
                                              |
                                              |model Middle {
@@ -1071,7 +1076,7 @@ class NestedDisconnectMutationInsideUpsertSpec extends FlatSpec with Matchers wi
          |   }
          |  ) {
          |    nameTop
-         |    middles (orderBy: id_ASC) {
+         |    middles (orderBy: { id: asc }) {
          |      nameMiddle
          |      bottom {
          |        nameBottom
@@ -1106,7 +1111,7 @@ class NestedDisconnectMutationInsideUpsertSpec extends FlatSpec with Matchers wi
                                              |model Bottom {
                                              |  id         String  @id @default(cuid())
                                              |  nameBottom String  @unique
-                                             |  below      Below[] $relationInlineDirective
+                                             |  below      Below[] $relationInlineAttribute
                                              |}
                                              |
                                              |model Below {
@@ -1160,7 +1165,7 @@ class NestedDisconnectMutationInsideUpsertSpec extends FlatSpec with Matchers wi
          |      nameMiddle
          |      bottom {
          |        nameBottom
-         |        below (orderBy: id_ASC){
+         |        below (orderBy: { id: asc }){
          |           nameBelow
          |        }
          |      }
@@ -1174,7 +1179,7 @@ class NestedDisconnectMutationInsideUpsertSpec extends FlatSpec with Matchers wi
     result.toString should be(
       """{"data":{"updateTop":{"nameTop":"updated top","middle":{"nameMiddle":"updated middle","bottom":{"nameBottom":"updated bottom","below":[{"nameBelow":"second below"}]}}}}}""")
 
-    server.query("query{belows (orderBy: id_ASC){nameBelow}}", project).toString should be(
+    server.query("query{belows (orderBy: { id: asc }){nameBelow}}", project).toString should be(
       """{"data":{"belows":[{"nameBelow":"below"},{"nameBelow":"second below"}]}}""")
   }
 

@@ -1,12 +1,13 @@
 //! Postgres description.
 use super::*;
-use quaint::prelude::Queryable;
+use native_types::{NativeType, PostgresType};
+use quaint::{prelude::Queryable, single::Quaint};
 use regex::Regex;
-use std::{borrow::Cow, collections::HashMap, convert::TryInto, sync::Arc};
+use std::{borrow::Cow, collections::HashMap, convert::TryInto};
 use tracing::debug;
 
 pub struct SqlSchemaDescriber {
-    conn: Arc<dyn Queryable + Send + Sync + 'static>,
+    conn: Quaint,
 }
 
 #[async_trait::async_trait]
@@ -46,11 +47,16 @@ impl super::SqlSchemaDescriberBackend for SqlSchemaDescriber {
             tables,
         })
     }
+
+    async fn version(&self, schema: &str) -> crate::SqlSchemaDescriberResult<Option<String>> {
+        debug!("getting db version '{}'", schema);
+        Ok(self.conn.version().await.unwrap())
+    }
 }
 
 impl SqlSchemaDescriber {
     /// Constructor.
-    pub fn new(conn: Arc<dyn Queryable + Send + Sync + 'static>) -> SqlSchemaDescriber {
+    pub fn new(conn: Quaint) -> SqlSchemaDescriber {
         SqlSchemaDescriber { conn }
     }
 
@@ -132,7 +138,7 @@ impl SqlSchemaDescriber {
         }
     }
 
-    async fn get_columns(&self, schema: &str, enums: &Vec<Enum>) -> HashMap<String, Vec<Column>> {
+    async fn get_columns(&self, schema: &str, enums: &[Enum]) -> HashMap<String, Vec<Column>> {
         let mut columns: HashMap<String, Vec<Column>> = HashMap::new();
 
         let sql = r#"
@@ -141,15 +147,18 @@ impl SqlSchemaDescriber {
                 column_name,
                 data_type,
                 udt_name as full_data_type,
-                character_maximum_length,
                 column_default,
                 is_nullable,
                 is_identity,
-                data_type
+                data_type, 
+                character_maximum_length,
+                numeric_precision,
+                numeric_scale,
+                numeric_precision_radix,
+                datetime_precision
             FROM information_schema.columns
             WHERE table_schema = $1
-            ORDER BY column_name
-            COLLATE "default"
+            ORDER BY ordinal_position
         "#;
 
         let rows = self
@@ -173,7 +182,6 @@ impl SqlSchemaDescriber {
                 .get("full_data_type")
                 .and_then(|x| x.to_string())
                 .expect("get full_data_type aka udt_name");
-            let character_maximum_length = col.get("character_maximum_length").and_then(|x| x.as_i64());
             let is_identity_str = col
                 .get("is_identity")
                 .and_then(|x| x.to_string())
@@ -203,18 +211,31 @@ impl SqlSchemaDescriber {
                 ColumnArity::Nullable
             };
 
-            let tpe = get_column_type(
-                data_type.as_ref(),
-                &full_data_type,
+            let character_maximum_length = col
+                .get("character_maximum_length")
+                .and_then(|x| x.as_i64().map(|x| x as u32));
+            let numeric_precision = col.get("numeric_precision").and_then(|x| x.as_i64().map(|x| x as u32));
+            let numeric_precision_radix = col
+                .get("numeric_precision_radix")
+                .and_then(|x| x.as_i64().map(|x| x as u32));
+            let numeric_scale = col.get("numeric_scale").and_then(|x| x.as_i64().map(|x| x as u32));
+            let time_precision = col.get("datetime_precision").and_then(|x| x.as_i64().map(|x| x as u32));
+
+            let precision = Precision {
                 character_maximum_length,
-                arity,
-                enums,
-            );
+                numeric_precision,
+                numeric_precision_radix,
+                numeric_scale,
+                time_precision,
+            };
+
+            let tpe = get_column_type(data_type.as_ref(), &full_data_type, arity, enums, precision);
 
             let default = match col.get("column_default") {
                 None => None,
                 Some(param_value) => match param_value.to_string() {
                     None => None,
+                    Some(x) if x.starts_with("NULL") => None,
                     Some(default_string) => {
                         Some(match &tpe.family {
                             ColumnTypeFamily::Int => match parse_int(&default_string) {
@@ -225,6 +246,10 @@ impl SqlSchemaDescriber {
                                 },
                             },
                             ColumnTypeFamily::Float => match parse_float(&default_string) {
+                                Some(float_value) => DefaultValue::VALUE(float_value),
+                                None => DefaultValue::DBGENERATED(default_string),
+                            },
+                            ColumnTypeFamily::Decimal => match parse_float(&default_string) {
                                 Some(float_value) => DefaultValue::VALUE(float_value),
                                 None => DefaultValue::DBGENERATED(default_string),
                             },
@@ -241,52 +266,48 @@ impl SqlSchemaDescriber {
                                 }
                             }
                             ColumnTypeFamily::DateTime => {
-                                match default_string.to_lowercase() == "now()".to_string()
-                                    || default_string.to_lowercase() == "current_timestamp".to_string()
-                                {
-                                    true => DefaultValue::NOW,
-                                    false => DefaultValue::DBGENERATED(default_string), //todo parse values
+                                match default_string.to_lowercase().as_str() {
+                                    "now()" | "current_timestamp" => DefaultValue::NOW,
+                                    _ => DefaultValue::DBGENERATED(default_string), //todo parse values
                                 }
                             }
                             ColumnTypeFamily::Binary => DefaultValue::DBGENERATED(default_string),
-                            ColumnTypeFamily::Json => DefaultValue::DBGENERATED(default_string),
+                            // JSON/JSONB defaults come in the '{}'::jsonb form.
+                            ColumnTypeFamily::Json => unsuffix_default_literal(&default_string, "jsonb", "jsonb")
+                                .or_else(|| unsuffix_default_literal(&default_string, "json", "json"))
+                                .map(|default| DefaultValue::VALUE(PrismaValue::Json(unquote_string(&default))))
+                                .unwrap_or_else(move || DefaultValue::DBGENERATED(default_string)),
                             ColumnTypeFamily::Uuid => DefaultValue::DBGENERATED(default_string),
-                            ColumnTypeFamily::Geometric => DefaultValue::DBGENERATED(default_string),
-                            ColumnTypeFamily::LogSequenceNumber => DefaultValue::DBGENERATED(default_string),
-                            ColumnTypeFamily::TextSearch => DefaultValue::DBGENERATED(default_string),
-                            ColumnTypeFamily::TransactionId => DefaultValue::DBGENERATED(default_string),
+                            ColumnTypeFamily::Xml => DefaultValue::DBGENERATED(default_string),
                             ColumnTypeFamily::Enum(enum_name) => {
                                 let enum_suffix_without_quotes = format!("::{}", enum_name);
                                 let enum_suffix_with_quotes = format!("::\"{}\"", enum_name);
                                 if default_string.ends_with(&enum_suffix_with_quotes) {
                                     DefaultValue::VALUE(PrismaValue::Enum(unquote_string(
-                                        default_string.replace(&enum_suffix_with_quotes, ""),
+                                        &default_string.replace(&enum_suffix_with_quotes, ""),
                                     )))
                                 } else if default_string.ends_with(&enum_suffix_without_quotes) {
                                     DefaultValue::VALUE(PrismaValue::Enum(unquote_string(
-                                        default_string.replace(&enum_suffix_without_quotes, ""),
+                                        &default_string.replace(&enum_suffix_without_quotes, ""),
                                     )))
                                 } else {
                                     DefaultValue::DBGENERATED(default_string)
                                 }
                             }
+                            ColumnTypeFamily::Duration => DefaultValue::DBGENERATED(default_string),
                             ColumnTypeFamily::Unsupported(_) => DefaultValue::DBGENERATED(default_string),
                         })
                     }
                 },
             };
 
-            let is_auto_increment = is_identity
-                || match default {
-                    Some(DefaultValue::SEQUENCE(_)) => true,
-                    _ => false,
-                };
+            let auto_increment = is_identity || matches!(default, Some(DefaultValue::SEQUENCE(_)));
 
             let col = Column {
                 name: col_name,
                 tpe,
                 default,
-                auto_increment: is_auto_increment,
+                auto_increment,
             };
 
             columns.entry(table_name).or_default().push(col);
@@ -307,6 +328,7 @@ impl SqlSchemaDescriber {
                 cl.relname as "parent_table",
                 att.attname as "parent_column",
                 con.confdeltype,
+                con.confupdtype,
                 conname as constraint_name,
                 child,
                 parent,
@@ -321,7 +343,8 @@ impl SqlSchemaDescriber {
                     con1.confrelid,
                     con1.conrelid,
                     con1.conname,
-                    con1.confdeltype
+                    con1.confdeltype,
+                    con1.confupdtype
                 FROM
                     pg_class cl
                     join pg_namespace ns on cl.relnamespace = ns.oid
@@ -338,7 +361,6 @@ impl SqlSchemaDescriber {
             JOIN pg_attribute att2 on
                 att2.attrelid = con.conrelid and att2.attnum = con.parent
             ORDER BY con_id, con.colidx"#;
-        debug!("describing table foreign keys, SQL: '{}'", sql);
 
         // One foreign key with multiple columns will be represented here as several
         // rows with the same ID, which we will have to combine into corresponding foreign key
@@ -372,11 +394,23 @@ impl SqlSchemaDescriber {
                 .get("confdeltype")
                 .and_then(|x| x.as_char())
                 .expect("get confdeltype");
+            let confupdtype = row
+                .get("confupdtype")
+                .and_then(|x| x.as_char())
+                .expect("get confupdtype");
             let constraint_name = row
                 .get("constraint_name")
                 .and_then(|x| x.to_string())
                 .expect("get constraint_name");
             let on_delete_action = match confdeltype {
+                'a' => ForeignKeyAction::NoAction,
+                'r' => ForeignKeyAction::Restrict,
+                'c' => ForeignKeyAction::Cascade,
+                'n' => ForeignKeyAction::SetNull,
+                'd' => ForeignKeyAction::SetDefault,
+                _ => panic!(format!("unrecognized foreign key action '{}'", confdeltype)),
+            };
+            let on_update_action = match confupdtype {
                 'a' => ForeignKeyAction::NoAction,
                 'r' => ForeignKeyAction::Restrict,
                 'c' => ForeignKeyAction::Cascade,
@@ -396,6 +430,7 @@ impl SqlSchemaDescriber {
                         referenced_table,
                         referenced_columns: vec![referenced_column],
                         on_delete_action,
+                        on_update_action,
                     };
                     intermediate_fks.insert(id, (table_name, fk));
                 }
@@ -426,7 +461,7 @@ impl SqlSchemaDescriber {
     async fn get_indices(
         &self,
         schema: &str,
-        sequences: &Vec<Sequence>,
+        sequences: &[Sequence],
     ) -> HashMap<String, (Vec<Index>, Option<PrimaryKey>)> {
         let mut indexes_map = HashMap::new();
 
@@ -453,6 +488,8 @@ impl SqlSchemaDescriber {
                     pg_index.indkey AS indkey,
                     generate_subscripts(pg_index.indkey, 1) AS indkeyidx
                 FROM pg_index
+                -- ignores partial indexes
+                Where indpred is Null
                 GROUP BY indrelid, indexrelid, indisunique, indisprimary, indkeyidx, indkey
                 ORDER BY indrelid, indexrelid, indkeyidx
             ) rawIndex,
@@ -476,7 +513,6 @@ impl SqlSchemaDescriber {
         GROUP BY tableInfos.relname, indexInfos.relname, rawIndex.indisunique, rawIndex.indisprimary, columnInfos.attname, rawIndex.indkeyidx
         ORDER BY rawIndex.indkeyidx
         "#;
-        debug!("Getting indices: {}", sql);
         let rows = self
             .conn
             .query_raw(&sql, &[schema.into()])
@@ -506,7 +542,7 @@ impl SqlSchemaDescriber {
                         let sequence = sequence_name.and_then(|sequence_name| {
                             let captures = RE_SEQ.captures(&sequence_name).expect("get captures");
                             let sequence_name = captures.get(1).expect("get capture").as_str();
-                            sequences.iter().find(|s| &s.name == sequence_name).map(|sequence| {
+                            sequences.iter().find(|s| s.name == sequence_name).map(|sequence| {
                                 debug!("Got sequence corresponding to primary key: {:#?}", sequence);
                                 sequence.clone()
                             })
@@ -515,6 +551,7 @@ impl SqlSchemaDescriber {
                         entry.1 = Some(PrimaryKey {
                             columns: vec![column_name],
                             sequence,
+                            constraint_name: Some(name.clone()),
                         });
                     }
                 }
@@ -525,7 +562,7 @@ impl SqlSchemaDescriber {
                     existing_index.columns.push(column_name);
                 } else {
                     entry.0.push(Index {
-                        name: name,
+                        name,
                         columns: vec![column_name],
                         tpe: match is_unique {
                             true => IndexType::Unique,
@@ -577,20 +614,23 @@ impl SqlSchemaDescriber {
 
     async fn get_enums(&self, schema: &str) -> SqlSchemaDescriberResult<Vec<Enum>> {
         debug!("Getting enums");
+
         let sql = "SELECT t.typname as name, e.enumlabel as value
             FROM pg_type t
             JOIN pg_enum e ON t.oid = e.enumtypid
             JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace
             WHERE n.nspname = $1
-            ORDER BY name, value";
+            ORDER BY e.enumsortorder";
+
         let rows = self.conn.query_raw(&sql, &[schema.into()]).await.unwrap();
         let mut enum_values: HashMap<String, Vec<String>> = HashMap::new();
+
         for row in rows.into_iter() {
             debug!("Got enum row: {:?}", row);
             let name = row.get("name").and_then(|x| x.to_string()).unwrap();
             let value = row.get("value").and_then(|x| x.to_string()).unwrap();
 
-            let values = enum_values.entry(name).or_insert(vec![]);
+            let values = enum_values.entry(name).or_insert_with(Vec::new);
             values.push(value);
         }
 
@@ -619,62 +659,78 @@ struct IndexRow {
 fn get_column_type<'a>(
     data_type: &str,
     full_data_type: &'a str,
-    character_maximum_length: Option<i64>,
     arity: ColumnArity,
-    enums: &Vec<Enum>,
+    enums: &[Enum],
+    precision: Precision,
 ) -> ColumnType {
     use ColumnTypeFamily::*;
-    let trim = |name: &'a str| name.trim_start_matches("_");
+    let trim = |name: &'a str| name.trim_start_matches('_');
     let enum_exists = |name: &'a str| enums.iter().any(|e| e.name == name);
 
-    let family: ColumnTypeFamily = match full_data_type {
-        x if data_type == "USER-DEFINED" && enum_exists(x) => Enum(x.to_owned()),
-        x if data_type == "ARRAY" && x.starts_with("_") && enum_exists(trim(x)) => Enum(trim(x).to_owned()),
-        "int2" | "_int2" => Int,
-        "int4" | "_int4" => Int,
-        "int8" | "_int8" => Int,
-        "oid" | "_oid" => Int,
-        "float4" | "_float4" => Float,
-        "float8" | "_float8" => Float,
-        "bool" | "_bool" => Boolean,
-        "text" | "_text" => String,
-        "citext" | "_citext" => String,
-        "varchar" | "_varchar" => String,
-        "date" | "_date" => DateTime,
-        "bytea" | "_bytea" => Binary,
-        "json" | "_json" => Json,
-        "jsonb" | "_jsonb" => Json,
-        "uuid" | "_uuid" => Uuid,
+    let (family, native_type) = match full_data_type {
+        x if data_type == "USER-DEFINED" && enum_exists(x) => (Enum(x.to_owned()), None),
+        x if data_type == "ARRAY" && x.starts_with('_') && enum_exists(trim(x)) => (Enum(trim(x).to_owned()), None),
+        "int2" | "_int2" => (Int, Some(PostgresType::SmallInt)),
+        "int4" | "_int4" => (Int, Some(PostgresType::Integer)),
+        "int8" | "_int8" => (Int, Some(PostgresType::BigInt)),
+        "oid" | "_oid" => (Int, None),
+        "float4" | "_float4" => (Float, Some(PostgresType::Real)),
+        "float8" | "_float8" => (Float, Some(PostgresType::DoublePrecision)),
+        "bool" | "_bool" => (Boolean, Some(PostgresType::Boolean)),
+        "text" | "_text" => (String, Some(PostgresType::Text)),
+        "citext" | "_citext" => (String, None),
+        "varchar" | "_varchar" => (String, Some(PostgresType::VarChar(precision.character_max_length()))),
+        "bpchar" | "_bpchar" => (String, Some(PostgresType::Char(precision.character_max_length()))),
+        "date" | "_date" => (DateTime, Some(PostgresType::Date)),
+        "bytea" | "_bytea" => (Binary, Some(PostgresType::ByteA)),
+        "json" | "_json" => (Json, Some(PostgresType::JSON)),
+        "jsonb" | "_jsonb" => (Json, Some(PostgresType::JSONB)),
+        "uuid" | "_uuid" => (Uuid, Some(PostgresType::UUID)),
+        "xml" | "_xml" => (Xml, Some(PostgresType::XML)),
         // bit and varbit should be binary, but are currently mapped to strings.
-        "bit" | "_bit" => String,
-        "varbit" | "_varbit" => String,
-        "box" | "_box" => Geometric,
-        "circle" | "_circle" => Geometric,
-        "line" | "_line" => Geometric,
-        "lseg" | "_lseg" => Geometric,
-        "path" | "_path" => Geometric,
-        "polygon" | "_polygon" => Geometric,
-        "bpchar" | "_bpchar" => String,
-        "interval" | "_interval" => String,
-        "numeric" | "_numeric" => Float,
-        "money" | "_money" => Float,
-        "pg_lsn" | "_pg_lsn" => LogSequenceNumber,
-        "time" | "_time" => DateTime,
-        "timetz" | "_timetz" => DateTime,
-        "timestamp" | "_timestamp" => DateTime,
-        "timestamptz" | "_timestamptz" => DateTime,
-        "tsquery" | "_tsquery" => TextSearch,
-        "tsvector" | "_tsvector" => TextSearch,
-        "txid_snapshot" | "_txid_snapshot" => TransactionId,
-        "inet" | "_inet" => String,
-        data_type => Unsupported(data_type.into()),
+        "bit" | "_bit" => (String, Some(PostgresType::Bit(precision.character_max_length()))),
+        "varbit" | "_varbit" => (String, Some(PostgresType::VarBit(precision.character_max_length()))),
+        "numeric" | "_numeric" => (
+            Decimal,
+            Some(PostgresType::Numeric(
+                precision.numeric_precision(),
+                precision.numeric_scale(),
+            )),
+        ),
+        "money" | "_money" => (Float, None),
+        "pg_lsn" | "_pg_lsn" => (Unsupported(full_data_type.into()), None),
+        "time" | "_time" => (DateTime, Some(PostgresType::Time(precision.time_precision()))),
+        "timetz" | "_timetz" => (
+            DateTime,
+            Some(PostgresType::TimeWithTimeZone(precision.time_precision())),
+        ),
+        "interval" | "_interval" => (Duration, Some(PostgresType::Interval(precision.time_precision()))),
+        "timestamp" | "_timestamp" => (DateTime, Some(PostgresType::Timestamp(precision.time_precision()))),
+        "timestamptz" | "_timestamptz" => (
+            DateTime,
+            Some(PostgresType::TimestampWithTimeZone(precision.time_precision())),
+        ),
+        "tsquery" | "_tsquery" => (Unsupported(full_data_type.into()), None),
+        "tsvector" | "_tsvector" => (Unsupported(full_data_type.into()), None),
+        "txid_snapshot" | "_txid_snapshot" => (Unsupported(full_data_type.into()), None),
+        "inet" | "_inet" => (String, None),
+        //geometric
+        "box" | "_box" => (Unsupported(full_data_type.into()), None),
+        "circle" | "_circle" => (Unsupported(full_data_type.into()), None),
+        "line" | "_line" => (Unsupported(full_data_type.into()), None),
+        "lseg" | "_lseg" => (Unsupported(full_data_type.into()), None),
+        "path" | "_path" => (Unsupported(full_data_type.into()), None),
+        "polygon" | "_polygon" => (Unsupported(full_data_type.into()), None),
+        full_data_type => (Unsupported(full_data_type.into()), None),
     };
+
     ColumnType {
         data_type: data_type.to_owned(),
         full_data_type: full_data_type.to_owned(),
-        character_maximum_length,
+        character_maximum_length: precision.character_maximum_length,
         family,
         arity,
+        native_type: native_type.map(|x| x.to_json()),
     }
 }
 
@@ -712,7 +768,8 @@ fn is_autoincrement(value: &str, schema_name: &str, table_name: &str, column_nam
                         let matched_segments = matched.as_str().split('_');
                         matched_segments
                             .zip(table_name_segments.chain(column_name_segments))
-                            .all(|(found, expected)| found == expected)
+                            // postgres automatically lower-cases table/column names when generating sequence names
+                            .all(|(found, expected)| found == expected || found == expected.to_lowercase())
                     })
                 })
                 .map(|_| true)
@@ -721,7 +778,7 @@ fn is_autoincrement(value: &str, schema_name: &str, table_name: &str, column_nam
 }
 
 fn unsuffix_default_literal<'a>(literal: &'a str, data_type: &str, full_data_type: &str) -> Option<Cow<'a, str>> {
-    const POSTGRES_DATA_TYPE_SUFFIX_RE: Lazy<Regex> =
+    static POSTGRES_DATA_TYPE_SUFFIX_RE: Lazy<Regex> =
         Lazy::new(|| Regex::new(r#"(?ms)^(.*)::(\\")?(.*)(\\")?$"#).unwrap());
 
     let captures = POSTGRES_DATA_TYPE_SUFFIX_RE.captures(literal)?;
@@ -737,7 +794,7 @@ fn unsuffix_default_literal<'a>(literal: &'a str, data_type: &str, full_data_typ
 }
 
 // See https://www.postgresql.org/docs/9.3/sql-syntax-lexical.html
-fn process_string_literal<'a>(literal: &'a str) -> Cow<'a, str> {
+fn process_string_literal(literal: &str) -> Cow<'_, str> {
     static POSTGRES_STRING_DEFAULT_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?ms)^B?'(.*)'$"#).unwrap());
     static POSTGRES_DEFAULT_QUOTE_UNESCAPE_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"'(')"#).unwrap());
     static POSTGRES_DEFAULT_BACKSLASH_UNESCAPE_RE: Lazy<Regex> =

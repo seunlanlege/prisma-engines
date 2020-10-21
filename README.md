@@ -40,7 +40,9 @@ compiled binaries inside the repository root in the `target/debug` (without
 | Introspection Engine       | `./target/[debug\|release]/introspection-engine`           |
 | Prisma Format              | `./target/[debug\|release]/prisma-fmt`                     |
 
-## Usage
+## Query Engine
+
+### Usage
 
 The Query Engine can be run as a graphql server without using the Prisma Client.
 If using it on production please be aware the api and the query language can
@@ -122,6 +124,7 @@ The Connector TestKit is a separate Scala project found at
 instances of the query engine and asserts that the responses are correct.
 
 ### Set up & run integration tests:
+
 **Prerequisites:**
 - Installed Rust toolchain.
 - Installed Docker and Docker-Compose.
@@ -129,7 +132,7 @@ instances of the query engine and asserts that the responses are correct.
 - Installed `direnv`, then `direnv allow` on the repository root.
     - Alternatively: Load the defined environment in `./.envrc` manually in your shell.
 
-**Setup**:
+**Setup:**
 There are helper `make` commands to set up a test environment for a specific
 database connector you want to test. The commands set up a container (if needed)
 and write the `current_connector` file, which is picked up by the integration
@@ -144,6 +147,25 @@ As an optional but recommended step, you can run the tests by setting up an
 IntelliJ project for `./query-engine/connector-test-kit`, which makes test
 results much more accessible. You need to install the Scala plugin for Intellij
 if you want to do so.
+
+Remember to set IntelliJ to use the version 8 of OpenJDK distribution.
+
+**On windows:*
+If not using WSL, `make` is not available and you should just see what your
+command does and do it manually. Basically this means editing the
+`current_connector` file and starting the needed Docker containers.
+
+To actually get the tests working, read the contents of `.envrc`. Then `Edit
+environment variables for your account` from Windows settings, and add at least
+the correct values for the following variables:
+
+- `SERVER ROOT` should point to the root directory of `prisma-engines` project.
+- `PRISMA_BINARY_PATH` is usually
+  `%SERVER_ROOT%\target\release\query-engine.exe`.
+- `MIGRATION_ENGINE_BINARY_PATH` should be
+  `%SERVER_ROOT%\target\release\migration-engine.exe`.
+
+Other variables may or may not be useful.
 
 **Run:**
 If you're using Intellij, you can run all tests by right-clicking

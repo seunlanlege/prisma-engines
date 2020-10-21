@@ -32,7 +32,7 @@ class NestedDeleteManyMutationInsideUpdateSpec extends FlatSpec with Matchers wi
          |  updateParent(
          |  where: $parentIdentifier
          |  data:{
-         |    p: "p2"
+         |    p: { set: "p2" }
          |    childOpt: {deleteMany: {
          |        where:{c: "c"}
          |    }}
@@ -45,7 +45,8 @@ class NestedDeleteManyMutationInsideUpdateSpec extends FlatSpec with Matchers wi
       """,
         project,
         errorCode = 2009,
-        errorContains = """ ↳ ChildUpdateOneWithoutParentOptInput (object)\n            ↳ deleteMany (field)\n              ↳ Field does not exist on enclosing type.` at `.Mutation.updateParent.data.ParentUpdateInput.childOpt.ChildUpdateOneWithoutParentOptInput.deleteMany`"""
+        errorContains =
+          """`Field does not exist on enclosing type.` at `Mutation.updateParent.data.ParentUpdateInput.childOpt.ChildUpdateOneWithoutParentOptInput.deleteMany`"""
       )
     }
   }
@@ -65,7 +66,7 @@ class NestedDeleteManyMutationInsideUpdateSpec extends FlatSpec with Matchers wi
          |  updateParent(
          |    where: $parent1Id
          |    data:{
-         |    childrenOpt: {deleteMany: {c_contains:"c"}
+         |    childrenOpt: {deleteMany: {c: { contains:"c"} }
          |    }
          |  }){
          |    childrenOpt {
@@ -97,7 +98,7 @@ class NestedDeleteManyMutationInsideUpdateSpec extends FlatSpec with Matchers wi
          |  updateParent(
          |    where: $parent1Id
          |    data:{
-         |    childrenOpt: {deleteMany: {c_contains:"c"}
+         |    childrenOpt: {deleteMany: {c: { contains:"c"} }
          |   }
          |  }){
          |    childrenOpt {
@@ -131,7 +132,7 @@ class NestedDeleteManyMutationInsideUpdateSpec extends FlatSpec with Matchers wi
          |    where: $parent1Id
          |    data:{
          |    childrenOpt: {deleteMany: {
-         |          c_contains:"c"
+         |          c: { contains:"c" }
          |      }
          |    }
          |  }){
@@ -167,10 +168,10 @@ class NestedDeleteManyMutationInsideUpdateSpec extends FlatSpec with Matchers wi
          |    data:{
          |    childrenOpt: {deleteMany: [
          |    {
-         |        c_contains:"1"
+         |        c: { contains:"1" }
          |    },
          |    {
-         |        c_contains:"2"
+         |        c: { contains:"2" }
          |    }
          |    ]}
          |  }){
@@ -189,7 +190,7 @@ class NestedDeleteManyMutationInsideUpdateSpec extends FlatSpec with Matchers wi
     }
   }
 
-  "a PM to C1!  relation " should "work with empty Filter" in {
+  "a PM to C1! relation " should "work with empty Filter" in {
     schemaWithRelation(onParent = ChildList, onChild = ParentReq).test { t =>
       val project = SchemaDsl.fromStringV11() {
         t.datamodel
@@ -204,9 +205,7 @@ class NestedDeleteManyMutationInsideUpdateSpec extends FlatSpec with Matchers wi
          |  updateParent(
          |    where: $parent1Id
          |    data:{
-         |    childrenOpt: {deleteMany: [
-         |    {}
-         |    ]}
+         |    childrenOpt: { deleteMany: [{}] }
          |  }){
          |    childrenOpt {
          |      c
@@ -239,10 +238,10 @@ class NestedDeleteManyMutationInsideUpdateSpec extends FlatSpec with Matchers wi
          |    data:{
          |    childrenOpt: {deleteMany: [
          |    {
-         |        c_contains:"3"
+         |        c: { contains:"3" }
          |    },
          |    {
-         |        c_contains:"4"
+         |        c: { contains:"4" }
          |    }
          |    ]}
          |  }){
@@ -266,7 +265,7 @@ class NestedDeleteManyMutationInsideUpdateSpec extends FlatSpec with Matchers wi
         |  createParent(data: {
         |    p: "p1", p_1: "p", p_2: "1"
         |    childrenOpt: {
-        |      create: [{c: "c1"},{c: "c2"}]
+        |      create: [{c: "c1", c_1: "dear", c_2: "god"},{c: "c2", c_1: "why", c_2: "me"}]
         |    }
         |  }){
         |    ${t.parent.selection}
@@ -284,7 +283,7 @@ class NestedDeleteManyMutationInsideUpdateSpec extends FlatSpec with Matchers wi
         |  createParent(data: {
         |    p: "p2", p_1: "p", p_2: "2"
         |    childrenOpt: {
-        |      create: [{c: "c3"},{c: "c4"}]
+        |      create: [{c: "c3", c_1: "buu", c_2: "huu"},{c: "c4", c_1: "meow", c_2: "miau"}]
         |    }
         |  }){
         |    ${t.parent.selection}

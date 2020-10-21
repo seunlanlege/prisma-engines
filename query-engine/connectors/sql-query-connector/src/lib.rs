@@ -4,6 +4,7 @@ mod database;
 mod error;
 mod filter_conversion;
 mod ordering;
+mod query_arguments_ext;
 mod query_builder;
 mod query_ext;
 mod row;

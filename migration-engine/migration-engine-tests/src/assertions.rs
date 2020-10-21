@@ -113,7 +113,13 @@ pub struct EnumAssertion<'a>(&'a Enum);
 
 impl<'a> EnumAssertion<'a> {
     pub fn assert_values(self, expected_values: &[&'static str]) -> AssertionResult<Self> {
-        assert_eq!(self.0.values, expected_values);
+        anyhow::ensure!(
+            self.0.values == expected_values,
+            "Assertion failed. The `{}` enum does not contain the expected variants.\nExpected:\n{:#?}\n\nFound:\n{:#?}\n",
+            self.0.name,
+            expected_values,
+            self.0.values
+        );
 
         Ok(self)
     }
@@ -122,6 +128,22 @@ impl<'a> EnumAssertion<'a> {
 pub struct TableAssertion<'a>(&'a Table);
 
 impl<'a> TableAssertion<'a> {
+    pub fn assert_column_count(self, n: usize) -> AssertionResult<Self> {
+        let columns_count = self.0.columns.len();
+
+        anyhow::ensure!(
+            columns_count == n,
+            anyhow::anyhow!(
+                "Assertion failed. Expected {n} columns, found {columns_count}. {columns:#?}",
+                n = n,
+                columns_count = columns_count,
+                columns = &self.0.columns,
+            )
+        );
+
+        Ok(self)
+    }
+
     pub fn assert_foreign_keys_count(self, n: usize) -> AssertionResult<Self> {
         let fk_count = self.0.foreign_keys.len();
         anyhow::ensure!(
@@ -219,7 +241,7 @@ impl<'a> TableAssertion<'a> {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("Primary key not found on {}.", self.0.name))?;
 
-        pk_assertions(PrimaryKeyAssertion(pk))?;
+        pk_assertions(PrimaryKeyAssertion { pk, table: self.0 })?;
 
         Ok(self)
     }
@@ -246,11 +268,50 @@ impl<'a> TableAssertion<'a> {
 
         Ok(self)
     }
+
+    pub fn debug_print(self) -> AssertionResult<Self> {
+        dbg!(&self.0);
+        Ok(self)
+    }
 }
 
 pub struct ColumnAssertion<'a>(&'a Column);
 
 impl<'a> ColumnAssertion<'a> {
+    pub fn assert_auto_increments(self) -> AssertionResult<Self> {
+        anyhow::ensure!(
+            self.0.auto_increment,
+            "Assertion failed. Expected column `{}` to be auto-incrementing.",
+            self.0.name,
+        );
+
+        Ok(self)
+    }
+
+    pub fn assert_no_auto_increment(self) -> AssertionResult<Self> {
+        anyhow::ensure!(
+            !self.0.auto_increment,
+            "Assertion failed. Expected column `{}` not to be auto-incrementing.",
+            self.0.name,
+        );
+
+        Ok(self)
+    }
+
+    pub fn assert_data_type(self, data_type: &str) -> AssertionResult<Self> {
+        let found = &self.0.tpe.data_type;
+
+        anyhow::ensure!(
+            found == data_type,
+            "Assertion failed: expected the data_type for the `{}` column to be `{}`, found `{}`",
+            self.0.name,
+            data_type,
+            found
+        );
+
+        Ok(self)
+    }
+
     pub fn assert_default(self, expected: Option<DefaultValue>) -> AssertionResult<Self> {
         let found = &self.0.default;
 
@@ -258,6 +319,20 @@ impl<'a> ColumnAssertion<'a> {
             found == &expected,
             "Assertion failed. Expected default: {:?}, but found {:?}",
             expected,
+            found
+        );
+
+        Ok(self)
+    }
+
+    pub fn assert_full_data_type(self, full_data_type: &str) -> AssertionResult<Self> {
+        let found = &self.0.tpe.full_data_type;
+
+        anyhow::ensure!(
+            found == full_data_type,
+            "Assertion failed: expected the full_data_type for the `{}` column to be `{}`, found `{}`",
+            self.0.name,
+            full_data_type,
             found
         );
 
@@ -327,10 +402,10 @@ impl<'a> ColumnAssertion<'a> {
         Ok(self)
     }
 
-    pub fn assert_is_required(self) -> AssertionResult<Self> {
+    pub fn assert_is_list(self) -> AssertionResult<Self> {
         anyhow::ensure!(
-            self.0.tpe.arity.is_required(),
-            "Assertion failed. Expected column `{}` to be NOT NULL, got {:?}",
+            self.0.tpe.arity.is_list(),
+            "Assertion failed. Expected column `{}` to be a list, got {:?}",
             self.0.name,
             self.0.tpe.arity,
         );
@@ -348,14 +423,58 @@ impl<'a> ColumnAssertion<'a> {
 
         Ok(self)
     }
+
+    pub fn assert_is_required(self) -> AssertionResult<Self> {
+        anyhow::ensure!(
+            self.0.tpe.arity.is_required(),
+            "Assertion failed. Expected column `{}` to be NOT NULL, got {:?}",
+            self.0.name,
+            self.0.tpe.arity,
+        );
+
+        Ok(self)
+    }
 }
 
-pub struct PrimaryKeyAssertion<'a>(&'a PrimaryKey);
+pub struct PrimaryKeyAssertion<'a> {
+    pk: &'a PrimaryKey,
+    table: &'a Table,
+}
 
 impl<'a> PrimaryKeyAssertion<'a> {
     pub fn assert_columns(self, column_names: &[&str]) -> AssertionResult<Self> {
-        assert_eq!(self.0.columns, column_names);
+        assert_eq!(self.pk.columns, column_names);
 
+        Ok(self)
+    }
+
+    pub fn assert_has_autoincrement(self) -> AssertionResult<Self> {
+        anyhow::ensure!(
+            self.table
+                .columns
+                .iter()
+                .any(|column| self.pk.columns.contains(&column.name) && column.auto_increment),
+            "Assertion failed: expected a sequence on the primary key, found none."
+        );
+
+        Ok(self)
+    }
+
+    pub fn assert_has_no_autoincrement(self) -> AssertionResult<Self> {
+        anyhow::ensure!(
+            !self
+                .table
+                .columns
+                .iter()
+                .any(|column| self.pk.columns.contains(&column.name) && column.auto_increment),
+            "Assertion failed: expected no sequence on the primary key, but found one."
+        );
+
+        Ok(self)
+    }
+
+    pub fn debug_print(self) -> AssertionResult<Self> {
+        dbg!(&self.pk);
         Ok(self)
     }
 }

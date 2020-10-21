@@ -24,20 +24,20 @@ pub enum Expression {
 impl Expression {
     pub fn with_lifted_span(&self, offset: usize) -> Expression {
         match self {
-            Expression::NumericValue(v, s) => Expression::NumericValue(v.clone(), lift_span(&s, offset)),
-            Expression::BooleanValue(v, s) => Expression::BooleanValue(v.clone(), lift_span(&s, offset)),
-            Expression::StringValue(v, s) => Expression::StringValue(v.clone(), lift_span(&s, offset)),
-            Expression::ConstantValue(v, s) => Expression::ConstantValue(v.clone(), lift_span(&s, offset)),
+            Expression::NumericValue(v, s) => Expression::NumericValue(v.clone(), s.lift_span(offset)),
+            Expression::BooleanValue(v, s) => Expression::BooleanValue(v.clone(), s.lift_span(offset)),
+            Expression::StringValue(v, s) => Expression::StringValue(v.clone(), s.lift_span(offset)),
+            Expression::ConstantValue(v, s) => Expression::ConstantValue(v.clone(), s.lift_span(offset)),
             Expression::Function(v, a, s) => Expression::Function(
                 v.clone(),
                 a.iter().map(|elem| elem.with_lifted_span(offset)).collect(),
-                lift_span(&s, offset),
+                s.lift_span(offset),
             ),
             Expression::Array(v, s) => Expression::Array(
                 v.iter().map(|elem| elem.with_lifted_span(offset)).collect(),
-                lift_span(&s, offset),
+                s.lift_span(offset),
             ),
-            Expression::Any(v, s) => Expression::Any(v.clone(), lift_span(&s, offset)),
+            Expression::Any(v, s) => Expression::Any(v.clone(), s.lift_span(offset)),
         }
     }
 
@@ -61,6 +61,19 @@ impl Expression {
         match &self {
             Self::Function(name, _, _) => name == "env",
             _ => false,
+        }
+    }
+
+    /// Creates a friendly readable representation for a value's type.
+    pub fn describe_value_type(&self) -> &'static str {
+        match self {
+            Expression::NumericValue(_, _) => "numeric",
+            Expression::BooleanValue(_, _) => "boolean",
+            Expression::StringValue(_, _) => "string",
+            Expression::ConstantValue(_, _) => "literal",
+            Expression::Function(_, _, _) => "functional",
+            Expression::Array(_, _) => "array",
+            Expression::Any(_, _) => "any",
         }
     }
 }
@@ -93,19 +106,6 @@ impl std::str::FromStr for Expression {
     }
 }
 
-/// Creates a friendly readable representation for a value's type.
-pub fn describe_value_type(val: &Expression) -> &'static str {
-    match val {
-        Expression::NumericValue(_, _) => "numeric",
-        Expression::BooleanValue(_, _) => "boolean",
-        Expression::StringValue(_, _) => "string",
-        Expression::ConstantValue(_, _) => "literal",
-        Expression::Function(_, _, _) => "functional",
-        Expression::Array(_, _) => "array",
-        Expression::Any(_, _) => "any",
-    }
-}
-
 #[cfg(test)]
 mod test {
     use super::*;
@@ -131,7 +131,7 @@ mod test {
         match func_arguments.get(0) {
             Some(Expression::Array(strings, _)) => {
                 let strings = strings
-                    .into_iter()
+                    .iter()
                     .map(|arg| match arg {
                         Expression::StringValue(s, _) => s.as_str(),
                         _ => unreachable!(),

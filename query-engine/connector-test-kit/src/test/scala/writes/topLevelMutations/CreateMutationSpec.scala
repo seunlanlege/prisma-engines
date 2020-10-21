@@ -134,7 +134,8 @@ class CreateMutationSpec extends FlatSpec with Matchers with ApiSpecBase {
       s"""mutation {createScalarModel(data: {optString: "test", optInt: B, optFloat: 1.234, optBoolean: true, optEnum: A, optDateTime: "2016-07-31T23:59:01.000Z" }){optString, optInt, optFloat, optBoolean, optEnum, optDateTime }}""",
       project = project,
       errorCode = 2009,
-      errorContains = """↳ ScalarModelCreateInput (object)\n        ↳ optInt (field)\n          ↳ Value types mismatch. Have: Enum(\"B\"), want: Scalar(Int)""",
+      errorContains =
+        """Query parsing/validation error at `Mutation.createScalarModel.data.ScalarModelCreateInput.optInt`: Value types mismatch. Have: Enum(\"B\"), want: Int""",
     )
   }
 
@@ -156,16 +157,28 @@ class CreateMutationSpec extends FlatSpec with Matchers with ApiSpecBase {
       project,
       errorCode = 2009,
       errorContains =
-        """↳ createScalarModel (field)\n    ↳ data (argument)\n      ↳ ScalarModelCreateInput (object)\n        ↳ optEnum (field)\n          ↳ Error parsing value: Enum value 'NOPE' is invalid for enum type MyEnum."""
+        """Query parsing/validation error at `Mutation.createScalarModel.data.ScalarModelCreateInput.optEnum`: Error parsing value: Enum value 'NOPE' is invalid for enum type MyEnum."""
     )
   }
 
-  "A Create Mutation" should "create with an optional relation set to null." in {
-    val res = server.query(
+  "A Create Mutation" should "reject an optional relation set to null." in {
+    server.queryThatMustFail(
       """mutation {
         |  createScalarModel(data: {
         |    optRel: null
         |  }){ relId }}""".stripMargin,
+      project = project,
+      errorCode = 2012,
+      errorContains = "Missing a required value at `Mutation.createScalarModel.data.ScalarModelCreateInput.optRel`"
+    )
+  }
+
+  "A Create Mutation" should "create with an optional relation omitted." in {
+    val res = server.query(
+      """mutation {
+        |  createScalarModel(data: {}) {
+        |    relId
+        |  }}""".stripMargin,
       project = project
     )
 

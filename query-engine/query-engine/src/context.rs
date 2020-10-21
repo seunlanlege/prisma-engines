@@ -1,11 +1,7 @@
 use crate::{exec_loader, PrismaError, PrismaResult};
-use query_core::{
-    schema::{QuerySchemaRef, SupportedCapabilities},
-    BuildMode, QueryExecutor, QuerySchemaBuilder,
-};
-// use prisma_models::InternalDataModelRef;
 use datamodel::{Configuration, Datamodel};
 use prisma_models::DatamodelConverter;
+use query_core::{schema::QuerySchemaRef, schema_builder, BuildMode, QueryExecutor};
 use std::sync::Arc;
 
 /// Prisma request context containing all immutable state of the process.
@@ -54,26 +50,34 @@ impl PrismaContext {
             .ok_or_else(|| PrismaError::ConfigurationError("No valid data source found".into()))?;
 
         // Load executor
-        let (db_name, executor) = exec_loader::load(&**data_source).await?;
+        let (db_name, executor) = exec_loader::load(&data_source).await?;
 
         // Build internal data model
         let internal_data_model = template.build(db_name);
 
         // Construct query schema
         let build_mode = if legacy { BuildMode::Legacy } else { BuildMode::Modern };
+        let query_schema: QuerySchemaRef = Arc::new(schema_builder::build(
+            internal_data_model,
+            build_mode,
+            enable_raw_queries,
+            data_source.capabilities(),
+        ));
 
-        let capabilities = SupportedCapabilities::empty(); // todo connector capabilities.
-
-        let schema_builder =
-            QuerySchemaBuilder::new(&internal_data_model, &capabilities, build_mode, enable_raw_queries);
-
-        let query_schema: QuerySchemaRef = Arc::new(schema_builder.build());
-
-        Ok(Self {
+        let context = Self {
             query_schema,
             dm,
             executor,
-        })
+        };
+
+        context.verify_connection().await?;
+
+        Ok(context)
+    }
+
+    async fn verify_connection(&self) -> PrismaResult<()> {
+        self.executor.primary_connector().get_connection().await?;
+        Ok(())
     }
 
     pub fn builder(config: Configuration, datamodel: Datamodel) -> ContextBuilder {
@@ -93,7 +97,7 @@ impl PrismaContext {
         &self.dm
     }
 
-    pub fn primary_connector(&self) -> &'static str {
-        self.executor.primary_connector()
+    pub fn primary_connector(&self) -> String {
+        self.executor.primary_connector().name()
     }
 }

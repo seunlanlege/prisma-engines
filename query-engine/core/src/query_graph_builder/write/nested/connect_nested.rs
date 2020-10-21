@@ -1,7 +1,6 @@
 use super::*;
 use crate::{
     query_ast::*,
-    query_document::*,
     query_graph::{Node, NodeRef, QueryGraph, QueryGraphDependency},
     ParsedInputMap, ParsedInputValue, QueryResult,
 };
@@ -29,10 +28,6 @@ pub fn nested_connect(
         .into_iter()
         .map(|value: ParsedInputValue| {
             let value: ParsedInputMap = value.try_into()?;
-
-            value.assert_size(1)?;
-            value.assert_non_null()?;
-
             extract_unique_filter(value, &child_model)
         })
         .collect::<QueryGraphBuilderResult<Vec<Filter>>>()?
@@ -179,9 +174,7 @@ fn handle_one_to_many(
             QueryGraphDependency::ParentProjection(child_link, Box::new(move |mut read_children_node, mut child_links| {
                 let child_link = match child_links.pop() {
                     Some(cl) => Ok(cl),
-                    None => Err(QueryGraphBuilderError::AssertionError(format!(
-                        "[Query Graph] Expected a valid parent ID to be present for a nested connect on a one-to-many relation."
-                    ))),
+                    None => Err(QueryGraphBuilderError::AssertionError("[Query Graph] Expected a valid parent ID to be present for a nested connect on a one-to-many relation.".to_string())),
                 }?;
 
                 if let Node::Query(Query::Write(ref mut wq)) = read_children_node {
@@ -202,9 +195,7 @@ fn handle_one_to_many(
             QueryGraphDependency::ParentProjection(parent_link, Box::new(move |mut update_node, mut parent_links| {
                 let parent_link = match parent_links.pop() {
                     Some(pl) => Ok(pl),
-                    None => Err(QueryGraphBuilderError::AssertionError(format!(
-                        "[Query Graph] Expected a valid parent ID to be present for a nested connect on a one-to-many relation."
-                    ))),
+                    None => Err(QueryGraphBuilderError::AssertionError("[Query Graph] Expected a valid parent ID to be present for a nested connect on a one-to-many relation.".to_string())),
                 }?;
 
                 if let Node::Query(Query::Write(ref mut wq)) = update_node {
@@ -368,7 +359,7 @@ fn handle_one_to_one(
          QueryGraphDependency::ParentProjection(child_linking_fields.clone(), Box::new(move |mut read_new_child_node, mut child_links| {
              let child_link = match child_links.pop() {
                  Some(link) => Ok(link),
-                 None => Err(QueryGraphBuilderError::AssertionError(format!("[Query Graph] Expected a valid parent ID to be present for a nested connect on a one-to-one relation."))),
+                 None => Err(QueryGraphBuilderError::AssertionError("[Query Graph] Expected a valid parent ID to be present for a nested connect on a one-to-one relation.".to_string())),
              }?;
 
              // This takes care of cases where the relation is inlined, CREATE ONLY. See doc comment for explanation.
@@ -405,7 +396,7 @@ fn handle_one_to_one(
              QueryGraphDependency::ParentProjection(child_model_identifier, Box::new(move |mut update_children_node, mut child_ids| {
                  let child_id = match child_ids.pop() {
                      Some(pid) => Ok(pid),
-                     None => Err(QueryGraphBuilderError::AssertionError(format!("[Query Graph] Expected a valid parent ID to be present for a nested connect on a one-to-one relation, updating inlined on child."))),
+                     None => Err(QueryGraphBuilderError::AssertionError("[Query Graph] Expected a valid parent ID to be present for a nested connect on a one-to-one relation, updating inlined on child.".to_string())),
                  }?;
 
                  if let Node::Query(Query::Write(ref mut wq)) = update_children_node {
@@ -419,10 +410,10 @@ fn handle_one_to_one(
         graph.create_edge(
              &parent_node,
              &update_children_node,
-             QueryGraphDependency::ParentProjection(parent_linking_fields.clone(), Box::new(move |mut update_children_node, mut parent_links| {
+             QueryGraphDependency::ParentProjection(parent_linking_fields, Box::new(move |mut update_children_node, mut parent_links| {
                  let parent_link = match parent_links.pop() {
                      Some(link) => Ok(link),
-                     None => Err(QueryGraphBuilderError::AssertionError(format!("[Query Graph] Expected a valid parent ID to be present for a nested connect on a one-to-one relation, updating inlined on child."))),
+                     None => Err(QueryGraphBuilderError::AssertionError("[Query Graph] Expected a valid parent ID to be present for a nested connect on a one-to-one relation, updating inlined on child.".to_string())),
                  }?;
 
                  if let Node::Query(Query::Write(ref mut wq)) = update_children_node {
@@ -442,10 +433,10 @@ fn handle_one_to_one(
         graph.create_edge(
             &read_new_child_node,
             &update_parent_node,
-            QueryGraphDependency::ParentProjection(child_linking_fields.clone(), Box::new(move |mut update_parent_node, mut child_links| {
+            QueryGraphDependency::ParentProjection(child_linking_fields, Box::new(move |mut update_parent_node, mut child_links| {
                 let child_link = match child_links.pop() {
                     Some(link) => Ok(link),
-                    None => Err(QueryGraphBuilderError::AssertionError(format!("[Query Graph] Expected a valid parent ID to be present for a nested connect on a one-to-one relation, updating inlined on parent."))),
+                    None => Err(QueryGraphBuilderError::AssertionError("[Query Graph] Expected a valid parent ID to be present for a nested connect on a one-to-one relation, updating inlined on parent.".to_string())),
                 }?;
 
                 if let Node::Query(Query::Write(ref mut wq)) = update_parent_node {
@@ -463,7 +454,7 @@ fn handle_one_to_one(
             QueryGraphDependency::ParentProjection(parent_model_identifier, Box::new(move |mut update_parent_node, mut parent_ids| {
                 let parent_id = match parent_ids.pop() {
                     Some(pid) => Ok(pid),
-                    None => Err(QueryGraphBuilderError::AssertionError(format!("[Query Graph] Expected a valid parent ID to be present for a nested connect on a one-to-one relation, updating inlined on parent."))),
+                    None => Err(QueryGraphBuilderError::AssertionError("[Query Graph] Expected a valid parent ID to be present for a nested connect on a one-to-one relation, updating inlined on parent.".to_string())),
                 }?;
 
                 if let Node::Query(Query::Write(ref mut wq)) = update_parent_node {

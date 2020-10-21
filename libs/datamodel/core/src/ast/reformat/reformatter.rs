@@ -4,32 +4,45 @@ use pest::Parser;
 // We have to use RefCell as rust cannot
 // do multiple mutable borrows inside a match statement.
 use super::helpers::*;
+use crate::ast::helper::get_sort_index_of_attribute;
 use crate::common::WritableString;
+use crate::diagnostics::ValidatedMissingFields;
+use pest::iterators::Pair;
 
 pub struct Reformatter<'a> {
     input: &'a str,
-    missing_fields: Result<Vec<MissingField>, crate::error::ErrorCollection>,
+    missing_fields: Result<ValidatedMissingFields, crate::diagnostics::Diagnostics>,
+    missing_field_attributes: Result<Vec<MissingFieldAttribute>, crate::diagnostics::Diagnostics>,
 }
 
 impl<'a> Reformatter<'a> {
     pub fn new(input: &'a str) -> Self {
         let missing_fields = Self::find_all_missing_fields(&input);
-        Reformatter { input, missing_fields }
+        let missing_field_attributes = Self::find_all_missing_attributes(&input);
+        Reformatter {
+            input,
+            missing_fields,
+            missing_field_attributes,
+        }
     }
 
     // this finds all auto generated fields, that are added during auto generation AND are missing from the original input.
-    fn find_all_missing_fields(schema_string: &str) -> Result<Vec<MissingField>, crate::error::ErrorCollection> {
+    fn find_all_missing_fields(schema_string: &str) -> Result<ValidatedMissingFields, crate::diagnostics::Diagnostics> {
+        let mut diagnostics = crate::diagnostics::Diagnostics::new();
         let schema_ast = crate::parse_schema_ast(&schema_string)?;
-        let datamodel = crate::parse_datamodel_and_ignore_env_errors(&schema_string)?;
-        let lowerer = crate::validator::LowerDmlToAst::new();
+        let validated_datamodel = crate::parse_datamodel_and_ignore_datasource_urls(&schema_string)?;
+        let generators = &vec![];
+        let lowerer = crate::transform::dml_to_ast::LowerDmlToAst::new(None, generators);
         let mut result = Vec::new();
 
-        for model in datamodel.models() {
+        diagnostics.append_warning_vec(validated_datamodel.warnings);
+
+        for model in validated_datamodel.subject.models() {
             let ast_model = schema_ast.find_model(&model.name).unwrap();
 
             for field in model.fields() {
-                if ast_model.fields.iter().find(|f| &f.name.name == &field.name).is_none() {
-                    let ast_field = lowerer.lower_field(&field, &datamodel)?;
+                if ast_model.fields.iter().find(|f| f.name.name == field.name()).is_none() {
+                    let ast_field = lowerer.lower_field(&field, &validated_datamodel.subject)?;
 
                     result.push(MissingField {
                         model: model.name.clone(),
@@ -39,7 +52,48 @@ impl<'a> Reformatter<'a> {
             }
         }
 
-        Ok(result)
+        Ok(ValidatedMissingFields {
+            subject: result,
+            warnings: diagnostics.warnings,
+        })
+    }
+
+    fn find_all_missing_attributes(
+        schema_string: &str,
+    ) -> Result<Vec<MissingFieldAttribute>, crate::diagnostics::Diagnostics> {
+        let mut diagnostics = crate::diagnostics::Diagnostics::new();
+        let schema_ast = crate::parse_schema_ast(&schema_string)?;
+        let validated_datamodel = crate::parse_datamodel_and_ignore_datasource_urls(&schema_string)?;
+        diagnostics.append_warning_vec(validated_datamodel.warnings);
+        let generators = &vec![];
+        let lowerer = crate::transform::dml_to_ast::LowerDmlToAst::new(None, generators);
+        let mut missing_field_attributes = Vec::new();
+        for model in validated_datamodel.subject.models() {
+            let ast_model = schema_ast.find_model(&model.name).unwrap();
+            for field in model.fields() {
+                let original_ast_field = ast_model.fields.iter().find(|f| f.name.name == field.name());
+                let new_ast_field = lowerer.lower_field(&field, &validated_datamodel.subject)?;
+                if original_ast_field.is_some() {
+                    for attribute in new_ast_field.attributes {
+                        if let Some(original_field) = original_ast_field {
+                            if original_field
+                                .attributes
+                                .iter()
+                                .find(|d| d.name.name == attribute.name.name)
+                                .is_none()
+                            {
+                                missing_field_attributes.push(MissingFieldAttribute {
+                                    model: model.name.clone(),
+                                    field: field.name().to_string(),
+                                    attribute,
+                                })
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Ok(missing_field_attributes)
     }
 
     pub fn reformat_to(&self, output: &mut dyn std::io::Write, ident_width: usize) {
@@ -140,7 +194,7 @@ impl<'a> Reformatter<'a> {
             "datasource",
             target,
             token,
-            Box::new(|table, _, token| match token.as_rule() {
+            Box::new(|table, _, token, _| match token.as_rule() {
                 Rule::key_value => Self::reformat_key_value(table, &token),
                 _ => Self::reformat_generic_token(table, &token),
             }),
@@ -152,7 +206,7 @@ impl<'a> Reformatter<'a> {
             "generator",
             target,
             token,
-            Box::new(|table, _, token| {
+            Box::new(|table, _, token, _| {
                 //
                 match token.as_rule() {
                     Rule::key_value => Self::reformat_key_value(table, &token),
@@ -185,21 +239,21 @@ impl<'a> Reformatter<'a> {
             "model",
             target,
             &token,
-            Box::new(|table, renderer, token| {
+            Box::new(|table, renderer, token, model_name| {
                 match token.as_rule() {
-                    Rule::directive => {
-                        // model level Directives reset the table. -> .render() does that
+                    Rule::block_level_attribute => {
+                        // model level attributes reset the table. -> .render() does that
                         table.render(renderer);
-                        Self::reformat_directive(renderer, &token, "@@");
+                        Self::reformat_attribute(renderer, &token, "@@");
                     }
-                    Rule::field_declaration => Self::reformat_field(table, &token),
+                    Rule::field_declaration => self.reformat_field(table, &token, model_name),
                     _ => Self::reformat_generic_token(table, &token),
                 }
             }),
             Box::new(|table, _, model_name| {
                 // TODO: what is the right thing to do on error?
                 if let Ok(missing_fields) = self.missing_fields.as_ref() {
-                    for missing_back_relation_field in missing_fields.iter() {
+                    for missing_back_relation_field in missing_fields.subject.iter() {
                         if missing_back_relation_field.model.as_str() == model_name {
                             Renderer::render_field(table, &missing_back_relation_field.field, false);
                         }
@@ -214,7 +268,7 @@ impl<'a> Reformatter<'a> {
         block_type: &'static str,
         renderer: &'a mut Renderer,
         token: &'a Token,
-        the_fn: Box<dyn Fn(&mut TableFormat, &mut Renderer, &Token) -> () + 'a>,
+        the_fn: Box<dyn Fn(&mut TableFormat, &mut Renderer, &Token, &str) + 'a>,
     ) {
         self.reformat_block_element_internal(block_type, renderer, token, the_fn, {
             // a no op
@@ -227,26 +281,50 @@ impl<'a> Reformatter<'a> {
         block_type: &'static str,
         renderer: &'a mut Renderer,
         token: &'a Token,
-        the_fn: Box<dyn Fn(&mut TableFormat, &mut Renderer, &Token) -> () + 'a>,
-        after_fn: Box<dyn Fn(&mut TableFormat, &mut Renderer, &str) -> () + 'a>,
+        the_fn: Box<dyn Fn(&mut TableFormat, &mut Renderer, &Token, &str) + 'a>,
+        after_fn: Box<dyn Fn(&mut TableFormat, &mut Renderer, &str) + 'a>,
     ) {
         let mut table = TableFormat::new();
         let mut block_name = "";
         let mut block_has_opened = false;
 
+        // sort attributes
+        let attributes = Self::extract_and_sort_attributes(token, false);
+
+        // used to add a new line between fields and block attributes if there isn't one already
+        let mut last_line_was_empty = false;
+
         for current in token.clone().into_inner() {
-            //println!("block: {:?} |{:?}|", current.as_rule(), current.as_str());
+            // println!("block: {:?} |{:?}|", current.as_rule(), current.as_str());
             match current.as_rule() {
                 Rule::BLOCK_OPEN => {
                     block_has_opened = true;
                 }
-                Rule::BLOCK_CLOSE => {}
+                Rule::BLOCK_CLOSE => {
+                    // New line between fields and attributes
+                    // only if there isn't already a new line in between
+                    if !attributes.is_empty() && !last_line_was_empty {
+                        table.render(renderer);
+                        table = TableFormat::new();
+                        renderer.end_line();
+                    }
+
+                    for d in &attributes {
+                        the_fn(&mut table, renderer, &d, block_name);
+                        // New line after each block attribute
+                        table.render(renderer);
+                        table = TableFormat::new();
+                        renderer.maybe_end_line();
+                    }
+                }
+
+                Rule::block_level_attribute => {}
 
                 Rule::non_empty_identifier | Rule::maybe_empty_identifier => {
                     // Begin.
                     block_name = current.as_str();
                     renderer.write(&format!("{} {} {{", block_type, block_name));
-                    renderer.maybe_end_line();
+                    renderer.end_line();
                     renderer.indent_up();
                 }
                 Rule::comment_block => {
@@ -267,6 +345,8 @@ impl<'a> Reformatter<'a> {
                 }
                 Rule::NEWLINE => {
                     if block_has_opened {
+                        last_line_was_empty = renderer.line_empty();
+
                         // do not render newlines before the block
                         // Reset the table layout on a newline.
                         table.render(renderer);
@@ -277,7 +357,7 @@ impl<'a> Reformatter<'a> {
                 Rule::BLOCK_LEVEL_CATCH_ALL => {
                     table.interleave(strip_new_line(current.as_str()));
                 }
-                _ => the_fn(&mut table, renderer, &current),
+                _ => the_fn(&mut table, renderer, &current, block_name),
             }
         }
 
@@ -295,12 +375,12 @@ impl<'a> Reformatter<'a> {
             "enum",
             target,
             token,
-            Box::new(|table, target, token| {
+            Box::new(|table, target, token, _| {
                 //
                 match token.as_rule() {
-                    Rule::block_level_directive => {
+                    Rule::block_level_attribute => {
                         table.render(target);
-                        Self::reformat_directive(target, token, "@@");
+                        Self::reformat_attribute(target, token, "@@");
                         table.end_line();
                     }
                     Rule::enum_value_declaration => Self::reformat_enum_entry(table, token),
@@ -314,15 +394,53 @@ impl<'a> Reformatter<'a> {
         for current in token.clone().into_inner() {
             match current.as_rule() {
                 Rule::non_empty_identifier => target.write(current.as_str()),
-                Rule::directive => Self::reformat_directive(&mut target.column_locked_writer_for(2), &current, "@"),
+                Rule::attribute => Self::reformat_attribute(&mut target.column_locked_writer_for(2), &current, "@"),
                 Rule::doc_comment | Rule::comment => target.append_suffix_to_current_row(current.as_str()),
                 _ => Self::reformat_generic_token(target, &current),
             }
         }
     }
 
-    fn reformat_field(target: &mut TableFormat, token: &Token) {
-        for current in token.clone().into_inner() {
+    fn extract_and_sort_attributes<'i>(token: &'i Token, is_field_attribute: bool) -> Vec<Pair<'i, Rule>> {
+        // get indices of attributes and store in separate Vector
+        let mut attributes = Vec::new();
+        for pair in token.clone().into_inner() {
+            if is_field_attribute {
+                if let Rule::attribute = pair.as_rule() {
+                    attributes.push(pair)
+                }
+            } else if let Rule::block_level_attribute = pair.as_rule() {
+                attributes.push(pair)
+            }
+        }
+
+        // sort attributes
+        attributes.sort_by(|a, b| {
+            let sort_index_a = get_sort_index_of_attribute(is_field_attribute, a.as_str());
+            let sort_index_b = get_sort_index_of_attribute(is_field_attribute, b.as_str());
+            sort_index_a.cmp(&sort_index_b)
+        });
+        attributes
+    }
+
+    fn reformat_field(&self, target: &mut TableFormat, token: &Token, model_name: &str) {
+        let field_name = &Self::get_identifier(token);
+
+        // extract and sort attributes
+        let attributes = Self::extract_and_sort_attributes(token, true);
+
+        // iterate through tokens and reorder attributes
+        let mut count = 0;
+        let inner_pairs_with_sorted_attributes = token.clone().into_inner().map(|p| match p.as_rule() {
+            Rule::attribute => {
+                count += 1;
+                attributes[count - 1].clone()
+            }
+            _ => p,
+        });
+
+        // write to target
+        for current in inner_pairs_with_sorted_attributes {
             match current.as_rule() {
                 Rule::non_empty_identifier | Rule::maybe_empty_identifier => {
                     target.write(current.as_str());
@@ -330,13 +448,24 @@ impl<'a> Reformatter<'a> {
                 Rule::field_type => {
                     target.write(&Self::reformat_field_type(&current));
                 }
-                Rule::directive => Self::reformat_directive(&mut target.column_locked_writer_for(2), &current, "@"),
+                Rule::attribute => Self::reformat_attribute(&mut target.column_locked_writer_for(2), &current, "@"),
                 // This is a comment at the end of a field.
                 Rule::doc_comment | Rule::comment => target.append_suffix_to_current_row(current.as_str()),
                 // This is a comment before the field declaration. Hence it must be interlevaed.
                 Rule::doc_comment_and_new_line => comment(&mut target.interleave_writer(), current.as_str()),
                 Rule::NEWLINE => {} // we do the new lines ourselves
                 _ => Self::reformat_generic_token(target, &current),
+            }
+        }
+        if let Ok(missing_field_attributes) = self.missing_field_attributes.as_ref() {
+            for missing_field_attribute in missing_field_attributes.iter() {
+                if &missing_field_attribute.field == field_name && missing_field_attribute.model.as_str() == model_name
+                {
+                    Renderer::render_field_attribute(
+                        &mut target.column_locked_writer_for(2),
+                        &missing_field_attribute.attribute,
+                    )
+                }
             }
         }
 
@@ -358,8 +487,8 @@ impl<'a> Reformatter<'a> {
                     target.write("=");
                     target.write(&Self::get_identifier(&current));
                 }
-                Rule::directive => {
-                    Self::reformat_directive(&mut target.column_locked_writer_for(4), &current, "@");
+                Rule::attribute => {
+                    Self::reformat_attribute(&mut target.column_locked_writer_for(4), &current, "@");
                 }
                 Rule::doc_comment | Rule::doc_comment_and_new_line => {
                     comment(&mut target.interleave_writer(), current.as_str())
@@ -398,12 +527,11 @@ impl<'a> Reformatter<'a> {
         panic!("No identifier found.")
     }
 
-    fn reformat_directive(target: &mut dyn LineWriteable, token: &Token, owl: &str) {
-        let token = Self::unpack_token_to_find_matching_rule(token.clone(), Rule::directive);
+    fn reformat_attribute(target: &mut dyn LineWriteable, token: &Token, owl: &str) {
+        let token = Self::unpack_token_to_find_matching_rule(token.clone(), Rule::attribute);
         for current in token.clone().into_inner() {
             match current.as_rule() {
-                Rule::directive_name => {
-                    // Begin
+                Rule::attribute_name => {
                     if !target.line_empty() {
                         target.write(" ");
                     }
@@ -413,7 +541,7 @@ impl<'a> Reformatter<'a> {
                 Rule::doc_comment | Rule::doc_comment_and_new_line => {
                     panic!("Comments inside attributes not supported yet.")
                 }
-                Rule::directive_arguments => Self::reformat_directive_args(target, &current),
+                Rule::attribute_arguments => Self::reformat_attribute_args(target, &current),
                 Rule::NEWLINE => {}
                 _ => Self::reformat_generic_token(target, &current),
             }
@@ -434,7 +562,7 @@ impl<'a> Reformatter<'a> {
         }
     }
 
-    fn reformat_directive_args(target: &mut dyn LineWriteable, token: &Token) {
+    fn reformat_attribute_args(target: &mut dyn LineWriteable, token: &Token) {
         let mut builder = StringBuilder::new();
 
         for current in token.clone().into_inner() {
@@ -444,7 +572,7 @@ impl<'a> Reformatter<'a> {
                     if !builder.line_empty() {
                         builder.write(", ");
                     }
-                    Self::reformat_directive_arg(&mut builder, &current);
+                    Self::reformat_attribute_arg(&mut builder, &current);
                 }
                 // This is a an unnamed arg.
                 Rule::argument_value => {
@@ -467,7 +595,7 @@ impl<'a> Reformatter<'a> {
         }
     }
 
-    fn reformat_directive_arg(target: &mut dyn LineWriteable, token: &Token) {
+    fn reformat_attribute_arg(target: &mut dyn LineWriteable, token: &Token) {
         for current in token.clone().into_inner() {
             match current.as_rule() {
                 Rule::argument_name => {
@@ -590,4 +718,11 @@ impl<'a> Reformatter<'a> {
 pub struct MissingField {
     pub model: String,
     pub field: crate::ast::Field,
+}
+
+#[derive(Debug)]
+pub struct MissingFieldAttribute {
+    pub model: String,
+    pub field: String,
+    pub attribute: crate::ast::Attribute,
 }

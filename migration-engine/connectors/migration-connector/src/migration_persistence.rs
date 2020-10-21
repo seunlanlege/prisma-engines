@@ -1,7 +1,8 @@
 use crate::{error::ConnectorError, steps::*, ConnectorResult};
 use chrono::{DateTime, Utc};
-use datamodel::{ast::SchemaAst, error::ErrorCollection, Datamodel};
+use datamodel::{ast::SchemaAst, Datamodel};
 use serde::Serialize;
+use std::str::FromStr;
 
 /// This trait is implemented by each connector. It provides a generic API to store and retrieve [Migration](struct.Migration.html) records.
 #[async_trait::async_trait]
@@ -143,12 +144,12 @@ impl Migration {
         MigrationUpdateParams {
             name: self.name.clone(),
             new_name: self.name.clone(),
-            revision: self.revision.clone(),
-            status: self.status.clone(),
+            revision: self.revision,
+            status: self.status,
             applied: self.applied,
             rolled_back: self.rolled_back,
             errors: self.errors.clone(),
-            finished_at: self.finished_at.clone(),
+            finished_at: self.finished_at,
         }
     }
 
@@ -162,12 +163,15 @@ impl Migration {
         datetime
     }
 
-    pub fn parse_datamodel(&self) -> Result<Datamodel, (ErrorCollection, String)> {
-        datamodel::parse_datamodel(&self.datamodel_string).map_err(|err| (err, self.datamodel_string.clone()))
+    pub fn parse_datamodel(&self) -> Result<Datamodel, String> {
+        datamodel::parse_datamodel_and_ignore_datasource_urls(&self.datamodel_string)
+            .map(|d| d.subject)
+            .map_err(|err| err.to_pretty_string("schema.prisma", &self.datamodel_string))
     }
 
-    pub fn parse_schema_ast(&self) -> Result<SchemaAst, (ErrorCollection, String)> {
-        datamodel::parse_schema_ast(&self.datamodel_string).map_err(|err| (err, self.datamodel_string.clone()))
+    pub fn parse_schema_ast(&self) -> Result<SchemaAst, String> {
+        datamodel::parse_schema_ast(&self.datamodel_string)
+            .map_err(|err| err.to_pretty_string("schema.prisma", &self.datamodel_string))
     }
 }
 
@@ -201,8 +205,20 @@ impl MigrationStatus {
         }
     }
 
-    pub fn from_str(s: String) -> MigrationStatus {
-        match s.as_ref() {
+    pub fn is_success(&self) -> bool {
+        matches!(self, MigrationStatus::MigrationSuccess)
+    }
+
+    pub fn is_pending(&self) -> bool {
+        matches!(self, MigrationStatus::Pending)
+    }
+}
+
+impl FromStr for MigrationStatus {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let status = match s {
             "Pending" => MigrationStatus::Pending,
             "MigrationInProgress" => MigrationStatus::MigrationInProgress,
             "MigrationSuccess" => MigrationStatus::MigrationSuccess,
@@ -210,22 +226,10 @@ impl MigrationStatus {
             "RollingBack" => MigrationStatus::RollingBack,
             "RollbackSuccess" => MigrationStatus::RollbackSuccess,
             "RollbackFailure" => MigrationStatus::RollbackFailure,
-            _ => panic!("MigrationStatus {:?} is not known", s),
-        }
-    }
+            _ => return Err(format!("MigrationStatus {:?} is not known", s)),
+        };
 
-    pub fn is_success(&self) -> bool {
-        match self {
-            MigrationStatus::MigrationSuccess => true,
-            _ => false,
-        }
-    }
-
-    pub fn is_pending(&self) -> bool {
-        match self {
-            MigrationStatus::Pending => true,
-            _ => false,
-        }
+        Ok(status)
     }
 }
 

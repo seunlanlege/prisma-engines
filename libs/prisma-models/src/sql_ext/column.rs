@@ -1,4 +1,5 @@
-use crate::{Field, ModelProjection, RelationField, RelationLinkManifestation, ScalarField};
+use crate::{Field, ModelProjection, RelationField, RelationLinkManifestation, ScalarField, ScalarFieldExt};
+use itertools::Itertools;
 use quaint::ast::{Column, Row};
 use std::convert::AsRef;
 
@@ -53,14 +54,18 @@ pub trait AsColumns {
 
 impl AsColumns for &[Field] {
     fn as_columns(&self) -> ColumnIterator {
-        let cols: Vec<Column<'static>> = self.into_iter().flat_map(AsColumns::as_columns).collect();
+        let cols: Vec<Column<'static>> = self.iter().flat_map(AsColumns::as_columns).collect();
         ColumnIterator::from(cols)
     }
 }
 
 impl AsColumns for ModelProjection {
     fn as_columns(&self) -> ColumnIterator {
-        let cols: Vec<Column<'static>> = self.fields().flat_map(|f| f.as_columns()).collect();
+        let cols: Vec<Column<'static>> = self
+            .fields()
+            .flat_map(|f| f.as_columns())
+            .unique_by(|c| c.name.clone())
+            .collect();
         ColumnIterator::from(cols)
     }
 }
@@ -151,7 +156,7 @@ where
         let column = Column::from(((db, table), col));
 
         match sf.default_value.as_ref().and_then(|d| d.get()) {
-            Some(default) => column.default(default),
+            Some(default) => column.default(sf.value(default)),
             None => column.default(quaint::ast::DefaultValue::Generated),
         }
     }

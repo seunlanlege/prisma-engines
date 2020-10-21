@@ -67,6 +67,19 @@ services:
       - databases
     tmpfs: /pgtmpfs12
 
+  postgres13:
+    image: postgres:13
+    restart: always
+    command: postgres -c 'max_connections=1000'
+    environment:
+      POSTGRES_PASSWORD: "prisma"
+      PGDATA: "/pgtmpfs13"
+    ports:
+      - "5435:5432"
+    networks:
+      - databases
+    tmpfs: /pgtmpfs12
+
   mysql-5-6:
     image: mysql:5.6
     command: mysqld
@@ -123,7 +136,7 @@ services:
     tmpfs: /var/lib/mariadb
 
   mssql-2019:
-    image: mcr.microsoft.com/mssql/server:2019-latest
+    image: prismagraphql/build:mssql-2019
     restart: always
     environment:
       ACCEPT_EULA: Y
@@ -132,7 +145,19 @@ services:
       - "1433:1433"
     networks:
       - databases
-    tmpfs: /var/lib/mssql
+    tmpfs: /var/opt/mssql/data:size=1G
+
+  mssql-2017:
+    image: prismagraphql/build:mssql-2017
+    restart: always
+    environment:
+      ACCEPT_EULA: Y
+      SA_PASSWORD: "<YourStrong@Passw0rd>"
+    ports:
+      - "1434:1433"
+    networks:
+      - databases
+    tmpfs: /var/opt/mssql/data:size=1G
 
 networks:
   databases:

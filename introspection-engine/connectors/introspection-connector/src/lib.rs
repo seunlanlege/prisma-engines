@@ -16,10 +16,12 @@ pub trait IntrospectionConnector: Send + Sync + 'static {
 
     async fn get_database_description(&self) -> ConnectorResult<String>;
 
+    async fn get_database_version(&self) -> ConnectorResult<String>;
+
     async fn introspect(
         &self,
         existing_data_model: &Datamodel,
-        reintrospect: bool,
+        natives_types: bool,
     ) -> ConnectorResult<IntrospectionResult>;
 }
 
@@ -40,7 +42,7 @@ pub enum Version {
 #[derive(Debug)]
 pub struct IntrospectionResult {
     /// Datamodel
-    pub datamodel: Datamodel,
+    pub data_model: Datamodel,
     /// warnings
     pub warnings: Vec<Warning>,
     /// version

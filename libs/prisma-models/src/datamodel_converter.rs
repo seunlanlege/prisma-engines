@@ -9,7 +9,7 @@ pub struct DatamodelConverter<'a> {
 
 impl<'a> DatamodelConverter<'a> {
     pub fn convert_string(datamodel: String) -> InternalDataModelTemplate {
-        let datamodel = datamodel::parse_datamodel(&datamodel).unwrap();
+        let datamodel = datamodel::parse_datamodel(&datamodel).unwrap().subject;
         Self::convert(&datamodel)
     }
 
@@ -62,6 +62,7 @@ impl<'a> DatamodelConverter<'a> {
                 manifestation: model.database_name().map(|s| s.to_owned()),
                 id_field_names: model.id_fields.clone(),
                 indexes: self.convert_indexes(&model),
+                dml_model: model.clone(),
             })
             .collect()
     }
@@ -69,44 +70,39 @@ impl<'a> DatamodelConverter<'a> {
     fn convert_fields(&self, model: &dml::Model) -> Vec<FieldTemplate> {
         model
             .fields()
-            .map(|field| match field.field_type {
-                dml::FieldType::Relation(ref ri) => {
+            .map(|field| match field {
+                dml::Field::RelationField(rf) => {
                     let relation = self
                         .relations
                         .iter()
-                        .find(|r| r.is_for_model_and_field(model, field))
+                        .find(|r| r.is_for_model_and_field(model, rf))
                         .unwrap_or_else(|| {
-                            panic!(
-                                "Did not find a relation for model {} and field {}",
-                                model.name, field.name
-                            )
+                            panic!("Did not find a relation for model {} and field {}", model.name, rf.name)
                         });
 
                     FieldTemplate::Relation(RelationFieldTemplate {
-                        name: field.name.clone(),
-                        is_id: field.is_id,
-                        is_required: field.is_required(),
-                        is_list: field.is_list(),
-                        is_unique: field.is_unique(&model),
-                        is_auto_generated_int_id: field.is_auto_generated_int_id(),
-                        relation_name: relation.name(),
-                        relation_side: relation.relation_side(field),
-                        relation_info: ri.clone(),
+                        name: rf.name.clone(),
+                        is_required: rf.is_required(),
+                        is_list: rf.is_list(),
+                        relation_name: relation.name.clone(),
+                        relation_side: relation.relation_side(rf),
+                        relation_info: rf.relation_info.clone(),
                     })
                 }
-                _ => FieldTemplate::Scalar(ScalarFieldTemplate {
-                    name: field.name.clone(),
-                    type_identifier: field.type_identifier(),
-                    is_required: field.is_required(),
-                    is_list: field.is_list(),
-                    is_unique: field.is_unique(&model),
-                    is_id: field.is_id(&model),
-                    is_auto_generated_int_id: field.is_auto_generated_int_id(),
-                    behaviour: field.behaviour(),
-                    internal_enum: field.internal_enum(self.datamodel),
-                    db_name: field.database_name.clone(),
-                    arity: field.arity,
-                    default_value: field.default_value.clone(),
+                dml::Field::ScalarField(sf) => FieldTemplate::Scalar(ScalarFieldTemplate {
+                    name: sf.name.clone(),
+                    type_identifier: sf.type_identifier(),
+                    is_required: sf.is_required(),
+                    is_list: sf.is_list(),
+                    is_unique: sf.is_unique(&model),
+                    is_id: sf.is_id(&model),
+                    is_auto_generated_int_id: sf.is_auto_generated_int_id(),
+                    is_autoincrement: sf.is_auto_increment(),
+                    behaviour: sf.behaviour(),
+                    internal_enum: sf.internal_enum(self.datamodel),
+                    db_name: sf.database_name.clone(),
+                    arity: sf.arity,
+                    default_value: sf.default_value.clone(),
                 }),
             })
             .collect()
@@ -145,99 +141,75 @@ impl<'a> DatamodelConverter<'a> {
     pub fn calculate_relations(datamodel: &dml::Datamodel) -> Vec<TempRelationHolder> {
         let mut result = Vec::new();
         for model in datamodel.models() {
-            for field in model.fields() {
-                if let dml::FieldType::Relation(relation_info) = &field.field_type {
-                    let dml::RelationInfo {
-                        to, to_fields, name, ..
-                    } = relation_info;
+            for field in model.relation_fields() {
+                let dml::RelationInfo {
+                    to, to_fields, name, ..
+                } = &field.relation_info;
 
-                    let related_model = datamodel
-                        .find_model(&to)
-                        .unwrap_or_else(|| panic!("Related model {} not found", to));
+                let related_model = datamodel
+                    .find_model(&to)
+                    .unwrap_or_else(|| panic!("Related model {} not found", to));
 
-                    let related_field = related_model
-                        .fields()
-                        .find(|f| match f.field_type {
-                            dml::FieldType::Relation(ref rel_info) => {
-                                // TODO: i probably don't need to check the the `to`. The name of the relation should be enough. The parser must guarantee that the relation info is set right.
-                                if model.name == related_model.name {
-                                    // SELF RELATIONS
-                                    rel_info.to == model.name && &rel_info.name == name && f.name != field.name
-                                } else {
-                                    // In a normal relation the related field could be named the same hence we omit the last condition from above.
-                                    rel_info.to == model.name && &rel_info.name == name
-                                }
-                            }
-                            _ => false,
-                        })
-                        .unwrap_or_else(|| {
-                            panic!(
-                                "Related model for model {} and field {} not found",
-                                model.name, field.name
-                            )
-                        });
+                let related_field = datamodel.find_related_field_bang(&field);
 
-                    let related_field_info: &dml::RelationInfo = match &related_field.field_type {
-                        dml::FieldType::Relation(info) => info,
-                        _ => panic!("this was not a relation field"),
-                    };
+                let related_field_info: &dml::RelationInfo = &related_field.relation_info;
 
-                    let (model_a, model_b, field_a, field_b, referenced_fields_a, referenced_fields_b) = match () {
-                        _ if model.name < related_model.name => (
+                let (model_a, model_b, field_a, field_b, referenced_fields_a, referenced_fields_b) = match () {
+                    _ if model.name < related_model.name => (
+                        model.clone(),
+                        related_model.clone(),
+                        field.clone(),
+                        related_field.clone(),
+                        to_fields,
+                        &related_field_info.to_fields,
+                    ),
+                    _ if related_model.name < model.name => (
+                        related_model.clone(),
+                        model.clone(),
+                        related_field.clone(),
+                        field.clone(),
+                        &related_field_info.to_fields,
+                        to_fields,
+                    ),
+                    // SELF RELATION CASE
+                    _ => {
+                        let (field_a, field_b) = if field.name < related_field.name {
+                            (field.clone(), related_field.clone())
+                        } else {
+                            (related_field.clone(), field.clone())
+                        };
+                        (
                             model.clone(),
                             related_model.clone(),
-                            field.clone(),
-                            related_field.clone(),
+                            field_a,
+                            field_b,
                             to_fields,
                             &related_field_info.to_fields,
-                        ),
-                        _ if related_model.name < model.name => (
-                            related_model.clone(),
-                            model.clone(),
-                            related_field.clone(),
-                            field.clone(),
-                            &related_field_info.to_fields,
-                            to_fields,
-                        ),
-                        // SELF RELATION CASE
-                        _ => {
-                            let (field_a, field_b) = if field.name < related_field.name {
-                                (field.clone(), related_field.clone())
-                            } else {
-                                (related_field.clone(), field.clone())
-                            };
-                            (
-                                model.clone(),
-                                related_model.clone(),
-                                field_a,
-                                field_b,
-                                to_fields,
-                                &related_field_info.to_fields,
-                            )
-                        }
-                    };
-                    let inline_on_model_a = TempManifestationHolder::Inline {
-                        in_table_of_model: model_a.name.clone(),
-                        field: field_a.clone(),
-                        referenced_fields: referenced_fields_a.clone(),
-                    };
-                    let inline_on_model_b = TempManifestationHolder::Inline {
-                        in_table_of_model: model_b.name.clone(),
-                        field: field_b.clone(),
-                        referenced_fields: referenced_fields_b.clone(),
-                    };
-                    let inline_on_this_model = TempManifestationHolder::Inline {
-                        in_table_of_model: model.name.clone(),
-                        field: field.clone(),
-                        referenced_fields: to_fields.clone(),
-                    };
-                    let inline_on_related_model = TempManifestationHolder::Inline {
-                        in_table_of_model: related_model.name.clone(),
-                        field: related_field.clone(),
-                        referenced_fields: related_field_info.to_fields.clone(),
-                    };
+                        )
+                    }
+                };
+                let inline_on_model_a = TempManifestationHolder::Inline {
+                    in_table_of_model: model_a.name.clone(),
+                    field: field_a.clone(),
+                    referenced_fields: referenced_fields_a.clone(),
+                };
+                let inline_on_model_b = TempManifestationHolder::Inline {
+                    in_table_of_model: model_b.name.clone(),
+                    field: field_b.clone(),
+                    referenced_fields: referenced_fields_b.clone(),
+                };
+                let inline_on_this_model = TempManifestationHolder::Inline {
+                    in_table_of_model: model.name.clone(),
+                    field: field.clone(),
+                    referenced_fields: to_fields.clone(),
+                };
+                let inline_on_related_model = TempManifestationHolder::Inline {
+                    in_table_of_model: related_model.name.clone(),
+                    field: related_field.clone(),
+                    referenced_fields: related_field_info.to_fields.clone(),
+                };
 
-                    let manifestation = match (field_a.is_list(), field_b.is_list()) {
+                let manifestation = match (field_a.is_list(), field_b.is_list()) {
                         (true, true) => TempManifestationHolder::Table,
                         (false, true) => inline_on_model_a,
                         (true, false) => inline_on_model_b,
@@ -258,15 +230,14 @@ impl<'a> DatamodelConverter<'a> {
                         },
                     };
 
-                    result.push(TempRelationHolder {
-                        name: name.clone(),
-                        model_a,
-                        model_b,
-                        field_a,
-                        field_b,
-                        manifestation,
-                    })
-                }
+                result.push(TempRelationHolder {
+                    name: name.clone(),
+                    model_a,
+                    model_b,
+                    field_a,
+                    field_b,
+                    manifestation,
+                })
             }
         }
 
@@ -279,8 +250,8 @@ pub struct TempRelationHolder {
     pub name: String,
     pub model_a: dml::Model,
     pub model_b: dml::Model,
-    pub field_a: dml::Field,
-    pub field_b: dml::Field,
+    pub field_a: dml::RelationField,
+    pub field_b: dml::RelationField,
     pub manifestation: TempManifestationHolder,
 }
 
@@ -289,7 +260,7 @@ pub enum TempManifestationHolder {
     Inline {
         in_table_of_model: String,
         /// The relation field.
-        field: dml::Field,
+        field: dml::RelationField,
         /// The name of the (dml) fields referenced by the relation.
         referenced_fields: Vec<String>,
     },
@@ -326,11 +297,11 @@ impl TempRelationHolder {
         self.field_a.is_list() && self.field_b.is_list()
     }
 
-    fn is_for_model_and_field(&self, model: &dml::Model, field: &dml::Field) -> bool {
+    fn is_for_model_and_field(&self, model: &dml::Model, field: &dml::RelationField) -> bool {
         (&self.model_a == model && &self.field_a == field) || (&self.model_b == model && &self.field_b == field)
     }
 
-    fn relation_side(&self, field: &dml::Field) -> RelationSide {
+    fn relation_side(&self, field: &dml::RelationField) -> RelationSide {
         if field == &self.field_a {
             RelationSide::A
         } else if field == &self.field_b {
@@ -359,19 +330,16 @@ impl TempRelationHolder {
 
 trait DatamodelFieldExtensions {
     fn type_identifier(&self) -> TypeIdentifier;
-    fn is_required(&self) -> bool;
-    fn is_list(&self) -> bool;
     fn is_unique(&self, model: &dml::Model) -> bool;
     fn is_id(&self, model: &dml::Model) -> bool;
     fn is_auto_generated_int_id(&self) -> bool;
     fn behaviour(&self) -> Option<FieldBehaviour>;
-    fn final_db_name(&self) -> String;
     fn internal_enum(&self, datamodel: &dml::Datamodel) -> Option<InternalEnum>;
     fn internal_enum_value(&self, enum_value: &dml::EnumValue) -> InternalEnumValue;
     // fn default_value(&self) -> Option<dml::DefaultValue>; todo this is not applicable anymore
 }
 
-impl DatamodelFieldExtensions for dml::Field {
+impl DatamodelFieldExtensions for dml::ScalarField {
     fn type_identifier(&self) -> TypeIdentifier {
         match &self.field_type {
             dml::FieldType::Enum(x) => TypeIdentifier::Enum(x.clone()),
@@ -383,20 +351,11 @@ impl DatamodelFieldExtensions for dml::Field {
                 dml::ScalarType::Int => TypeIdentifier::Int,
                 dml::ScalarType::String => TypeIdentifier::String,
                 dml::ScalarType::Json => TypeIdentifier::Json,
+                _ => todo!(),
             },
             dml::FieldType::Unsupported(_) => panic!("These should always be commented out"),
-            dml::FieldType::ConnectorSpecific { .. } => {
-                unimplemented!("Connector Specific types are not supported here yet")
-            }
+            dml::FieldType::NativeType(prisma_tpe, _native_type) => TypeIdentifier::from(*prisma_tpe),
         }
-    }
-
-    fn is_required(&self) -> bool {
-        self.arity == dml::FieldArity::Required
-    }
-
-    fn is_list(&self) -> bool {
-        self.arity == dml::FieldArity::List
     }
 
     fn is_unique(&self, model: &dml::Model) -> bool {
@@ -404,8 +363,7 @@ impl DatamodelFieldExtensions for dml::Field {
         let is_declared_as_unique_through_multi_field_unique = model
             .indices
             .iter()
-            .find(|id| id.fields == vec![self.name.clone()])
-            .is_some();
+            .any(|ixd| ixd.is_unique() && ixd.fields == vec![self.name.clone()]);
 
         self.is_unique || is_declared_as_unique_through_multi_field_unique
     }
@@ -416,10 +374,7 @@ impl DatamodelFieldExtensions for dml::Field {
     }
 
     fn is_auto_generated_int_id(&self) -> bool {
-        let is_autogenerated_id = match self.default_value {
-            Some(DefaultValue::Expression(_)) if self.is_id => true,
-            _ => false,
-        };
+        let is_autogenerated_id = matches!(self.default_value, Some(DefaultValue::Expression(_)) if self.is_id);
 
         let is_an_int = self.type_identifier() == TypeIdentifier::Int;
 
@@ -432,10 +387,6 @@ impl DatamodelFieldExtensions for dml::Field {
         } else {
             None
         }
-    }
-
-    fn final_db_name(&self) -> String {
-        self.final_database_name().to_owned()
     }
 
     fn internal_enum(&self, datamodel: &dml::Datamodel) -> Option<InternalEnum> {
@@ -459,8 +410,4 @@ impl DatamodelFieldExtensions for dml::Field {
             database_name: enum_value.database_name.clone(),
         }
     }
-
-    // fn default_value(&self) -> Option<dml::DefaultValue> {
-    //     self.default_value.clone()
-    // }
 }

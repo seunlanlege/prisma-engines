@@ -1,9 +1,9 @@
 use crate::command_error::CommandError;
 use crate::error::Error;
-use crate::error_rendering::render_jsonrpc_error;
-use datamodel::Datamodel;
+use datamodel::configuration::preview_features::PreviewFeatures;
+use datamodel::{Configuration, Datamodel};
 use futures::{FutureExt, TryFutureExt};
-use introspection_connector::{DatabaseMetadata, IntrospectionConnector, IntrospectionResultOutput, Warning};
+use introspection_connector::{ConnectorResult, DatabaseMetadata, IntrospectionConnector, IntrospectionResultOutput};
 use jsonrpc_derive::rpc;
 use serde_derive::*;
 use sql_introspection_connector::SqlIntrospectionConnector;
@@ -23,8 +23,14 @@ pub trait Rpc {
     #[rpc(name = "getDatabaseDescription")]
     fn get_database_description(&self, input: IntrospectionInput) -> RpcFutureResult<String>;
 
+    #[rpc(name = "getDatabaseVersion")]
+    fn get_database_version(&self, input: IntrospectionInput) -> RpcFutureResult<String>;
+
     #[rpc(name = "introspect")]
     fn introspect(&self, input: IntrospectionInput) -> RpcFutureResult<IntrospectionResultOutput>;
+
+    #[rpc(name = "debugPanic")]
+    fn debug_panic(&self) -> RpcFutureResult<()>;
 }
 
 pub struct RpcImpl;
@@ -39,15 +45,19 @@ impl Rpc for RpcImpl {
     }
 
     fn get_database_description(&self, input: IntrospectionInput) -> RpcFutureResult<String> {
-        Box::new(Self::get_database_description(input.schema).boxed().compat())
+        Box::new(Self::get_database_description_internal(input.schema).boxed().compat())
+    }
+
+    fn get_database_version(&self, input: IntrospectionInput) -> RpcFutureResult<String> {
+        Box::new(Self::get_database_version_internal(input.schema).boxed().compat())
     }
 
     fn introspect(&self, input: IntrospectionInput) -> RpcFutureResult<IntrospectionResultOutput> {
-        Box::new(
-            Self::introspect_internal(input.schema, input.reintrospect)
-                .boxed()
-                .compat(),
-        )
+        Box::new(Self::introspect_internal(input.schema, input.force).boxed().compat())
+    }
+
+    fn debug_panic(&self) -> RpcFutureResult<()> {
+        Box::new(Self::debug_panic().boxed().compat())
     }
 }
 
@@ -56,9 +66,13 @@ impl RpcImpl {
         RpcImpl
     }
 
-    async fn load_connector(schema: &String) -> Result<Box<dyn IntrospectionConnector>, Error> {
+    async fn load_connector(
+        schema: &String,
+    ) -> Result<(Configuration, String, Box<dyn IntrospectionConnector>), Error> {
         let config = datamodel::parse_configuration(&schema)?;
+
         let url = config
+            .subject
             .datasources
             .first()
             .ok_or_else(|| CommandError::Generic(anyhow::anyhow!("There is no datasource in the schema.")))?
@@ -66,148 +80,95 @@ impl RpcImpl {
             .to_owned()
             .value;
 
-        Ok(Box::new(SqlIntrospectionConnector::new(&url).await?))
+        Ok((
+            config.subject,
+            url.clone(),
+            Box::new(SqlIntrospectionConnector::new(&url).await?),
+        ))
     }
 
-    pub async fn introspect_internal(schema: String, reintrospect: bool) -> RpcResult<IntrospectionResultOutput> {
-        let config = datamodel::parse_configuration(&schema).map_err(Error::from)?;
-        let url = config
-            .datasources
-            .first()
-            .ok_or_else(|| CommandError::Generic(anyhow::anyhow!("There is no datasource in the schema.")))
-            .map_err(Error::from)?
-            .url()
-            .to_owned()
-            .value;
+    pub async fn catch<O>(fut: impl std::future::Future<Output = ConnectorResult<O>>) -> RpcResult<O> {
+        match fut.await {
+            Ok(o) => Ok(o),
+            Err(e) => Err(RpcError::from(Error::from(e))),
+        }
+    }
 
-        let connector = RpcImpl::load_connector(&schema).await?;
+    pub async fn introspect_internal(schema: String, force: bool) -> RpcResult<IntrospectionResultOutput> {
+        let (config, url, connector) = RpcImpl::load_connector(&schema).await?;
 
-        let mut could_not_parse_input_data_model = false;
-        let input_data_model = match datamodel::parse_datamodel(&schema) {
-            Ok(existing_data_model) => existing_data_model,
-            Err(_) => {
-                could_not_parse_input_data_model = true;
-                Datamodel::new()
-            }
+        let input_data_model = if !force {
+            datamodel::parse_datamodel(&schema).map(|d| d.subject).map_err(|err| {
+                Error::from(CommandError::ReceivedBadDatamodel(
+                    err.to_pretty_string("schema.prisma", &schema),
+                ))
+            })?
+        } else {
+            Datamodel::new()
         };
 
-        match connector.introspect(&input_data_model, reintrospect).await {
-            Ok(introspection_result)
-                if introspection_result.datamodel.models.is_empty()
-                    && introspection_result.datamodel.enums.is_empty() =>
-            {
-                Err(render_jsonrpc_error(Error::from(
-                    CommandError::IntrospectionResultEmpty(url.to_string()),
-                )))
-            }
+        let native_types = match datamodel::parse_configuration(&schema) {
+            Ok(config) => config
+                .subject
+                .generators
+                .iter()
+                .any(|g| g.has_preview_feature("nativeTypes")),
+            Err(_) => false,
+        };
+
+        let result = match connector.introspect(&input_data_model, native_types).await {
             Ok(introspection_result) => {
-                let warnings = match could_not_parse_input_data_model {
-                    true if reintrospect => {
-                        let mut warnings = introspection_result.warnings;
-                        warnings.push(Warning {
-                        code: 0,
-                        message:
-                        "The input datamodel could not be parsed. This means it was not used to enrich the introspected datamodel with previous manual changes."
-                            .into(),
-                        affected: serde_json::Value::Null,
-                    });
-                        warnings
+                if introspection_result.data_model.is_empty() {
+                    Err(Error::from(CommandError::IntrospectionResultEmpty(url.to_string())))
+                } else {
+                    match datamodel::render_datamodel_and_config_to_string(&introspection_result.data_model, &config) {
+                        Err(e) => Err(Error::from(e)),
+                        Ok(dm) => Ok(IntrospectionResultOutput {
+                            datamodel: dm,
+                            warnings: introspection_result.warnings,
+                            version: introspection_result.version,
+                        }),
                     }
-                    _ => introspection_result.warnings,
-                };
-
-                let result = IntrospectionResultOutput {
-                    datamodel: datamodel::render_datamodel_and_config_to_string(
-                        &introspection_result.datamodel,
-                        &config,
-                    )
-                    .map_err(Error::from)?,
-                    warnings,
-                    version: introspection_result.version,
-                };
-
-                Ok(result)
+                }
             }
-            Err(e) => Err(render_jsonrpc_error(Error::from(e))),
-        }
+            Err(e) => Err(Error::from(e)),
+        };
+
+        result.map_err(RpcError::from)
     }
 
     pub async fn list_databases_internal(schema: String) -> RpcResult<Vec<String>> {
-        let connector = RpcImpl::load_connector(&schema).await?;
-        Ok(connector.list_databases().await.map_err(Error::from)?)
+        let (_, _, connector) = RpcImpl::load_connector(&schema).await?;
+        RpcImpl::catch(connector.list_databases()).await
     }
 
-    pub async fn get_database_description(schema: String) -> RpcResult<String> {
-        let connector = RpcImpl::load_connector(&schema).await?;
-        Ok(connector.get_database_description().await.map_err(Error::from)?)
+    pub async fn get_database_description_internal(schema: String) -> RpcResult<String> {
+        let (_, _, connector) = RpcImpl::load_connector(&schema).await?;
+        RpcImpl::catch(connector.get_database_description()).await
+    }
+
+    pub async fn get_database_version_internal(schema: String) -> RpcResult<String> {
+        let (_, _, connector) = RpcImpl::load_connector(&schema).await?;
+        RpcImpl::catch(connector.get_database_version()).await
     }
 
     pub async fn get_database_metadata_internal(schema: String) -> RpcResult<DatabaseMetadata> {
-        let connector = RpcImpl::load_connector(&schema).await?;
-        Ok(connector.get_metadata().await.map_err(Error::from)?)
+        let (_, _, connector) = RpcImpl::load_connector(&schema).await?;
+        RpcImpl::catch(connector.get_metadata()).await
+    }
+
+    pub async fn debug_panic() -> RpcResult<()> {
+        panic!("This is the debugPanic artificial panic")
     }
 }
 
-// {"id":3,"jsonrpc":"2.0","method":"getDatabaseDescription","params":[{"schema":{}}]}
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct IntrospectionInput {
     pub(crate) schema: String,
-    pub(crate) reintrospect: bool,
+    #[serde(default = "default_false")]
+    pub(crate) force: bool,
 }
 
-use serde::de::{Deserialize, Deserializer, Error as SerdeError, MapAccess, Visitor};
-use std::fmt;
-
-impl<'de> Deserialize<'de> for IntrospectionInput {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        #[derive(Deserialize)]
-        #[serde(field_identifier, rename_all = "lowercase")]
-        enum Field {
-            Schema,
-            Reintrospect,
-        }
-
-        struct IntrospectionInputVisitor;
-
-        impl<'de> Visitor<'de> for IntrospectionInputVisitor {
-            type Value = IntrospectionInput;
-
-            fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-                formatter.write_str("struct IntrospectionInput")
-            }
-
-            fn visit_map<V>(self, mut map: V) -> Result<IntrospectionInput, V::Error>
-            where
-                V: MapAccess<'de>,
-            {
-                let mut schema = None;
-                let mut reintrospect = None;
-                while let Some(key) = map.next_key()? {
-                    match key {
-                        Field::Schema => {
-                            if schema.is_some() {
-                                return Err(SerdeError::duplicate_field("schema"));
-                            }
-                            schema = Some(map.next_value()?);
-                        }
-                        Field::Reintrospect => {
-                            if reintrospect.is_some() {
-                                return Err(SerdeError::duplicate_field("reintrospect"));
-                            }
-                            reintrospect = Some(map.next_value()?);
-                        }
-                    }
-                }
-                let schema = schema.ok_or_else(|| SerdeError::missing_field("schema"))?;
-                let reintrospect = reintrospect.or(Some(false)).unwrap();
-                Ok(IntrospectionInput { schema, reintrospect })
-            }
-        }
-
-        const FIELDS: &'static [&'static str] = &["schema", "reintrospect"];
-        deserializer.deserialize_struct("IntrospectionInput", FIELDS, IntrospectionInputVisitor)
-    }
+fn default_false() -> bool {
+    false
 }

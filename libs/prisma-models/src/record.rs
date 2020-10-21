@@ -44,7 +44,27 @@ impl ManyRecords {
         }
     }
 
-    pub fn order_by(&mut self, order_by: &OrderBy) {
+    pub fn empty(selected_fields: &ModelProjection) -> Self {
+        Self {
+            records: Vec::new(),
+            field_names: selected_fields.names().map(|n| n.to_string()).collect(),
+        }
+    }
+
+    pub fn from_projection(projection: Vec<Vec<PrismaValue>>, selected_fields: &ModelProjection) -> Self {
+        Self {
+            records: projection
+                .into_iter()
+                .map(|v| Record {
+                    values: v,
+                    parent_id: None,
+                })
+                .collect(),
+            field_names: selected_fields.db_names().collect(),
+        }
+    }
+
+    pub fn order_by(&mut self, order_bys: &[OrderBy]) {
         let field_indices: HashMap<&str, usize> = self
             .field_names
             .iter()
@@ -53,12 +73,18 @@ impl ManyRecords {
             .collect();
 
         self.records.sort_by(|a, b| {
-            let index = field_indices[order_by.field.db_name()];
+            let mut orderings = order_bys.iter().map(|o| {
+                let index = field_indices[o.field.db_name()];
+                match o.sort_order {
+                    SortOrder::Ascending => a.values[index].cmp(&b.values[index]),
+                    SortOrder::Descending => b.values[index].cmp(&a.values[index]),
+                }
+            });
 
-            match order_by.sort_order {
-                SortOrder::Ascending => a.values[index].cmp(&b.values[index]),
-                SortOrder::Descending => b.values[index].cmp(&a.values[index]),
-            }
+            orderings
+                .next()
+                .map(|first| orderings.fold(first, |acc, ord| acc.then(ord)))
+                .unwrap()
         })
     }
 
@@ -69,11 +95,7 @@ impl ManyRecords {
     pub fn projections(&self, model_projection: &ModelProjection) -> crate::Result<Vec<RecordProjection>> {
         self.records
             .iter()
-            .map(|record| {
-                record
-                    .projection(&self.field_names, model_projection)
-                    .map(|i| i.clone())
-            })
+            .map(|record| record.projection(&self.field_names, model_projection))
             .collect()
     }
 

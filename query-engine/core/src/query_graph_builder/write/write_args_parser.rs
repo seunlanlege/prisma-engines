@@ -1,6 +1,6 @@
 use super::*;
 use crate::query_document::{ParsedInputMap, ParsedInputValue};
-use connector::WriteArgs;
+use connector::{WriteArgs, WriteExpression};
 use prisma_models::{Field, ModelRef, PrismaValue, RelationFieldRef};
 use std::{convert::TryInto, sync::Arc};
 
@@ -21,30 +21,39 @@ impl WriteArgsParser {
 
                 match field {
                     Field::Scalar(sf) if sf.is_list => {
-                        let vals: ParsedInputMap = v.try_into()?;
-                        let set_value = vals.into_iter().find(|(k, _)| k == "set");
-
-                        let set_value: PrismaValue = match set_value {
-                            Some(value) => value.1.try_into()?,
-                            None => {
-                                return Err(QueryGraphBuilderError::MissingRequiredArgument {
-                                    argument_name: "set".to_owned(),
-                                    field_name: sf.name.to_owned(),
-                                    object_name: model.name.to_owned(),
-                                })
-                            }
+                        let set_value: PrismaValue = match v {
+                            ParsedInputValue::List(_) => v.try_into()?,
+                            ParsedInputValue::Map(mut map) => map.remove("set").unwrap().try_into()?,
+                            _ => unreachable!(),
                         };
 
-                        args.args.insert(sf.db_name().clone(), set_value)
+                        args.args.insert(sf, set_value)
                     }
 
                     Field::Scalar(sf) => {
-                        let value: PrismaValue = v.try_into()?;
-                        args.args.insert(sf.db_name().clone(), value)
+                        let expr: WriteExpression = match v {
+                            ParsedInputValue::Single(v) => v.into(),
+                            ParsedInputValue::Map(map) => {
+                                let (operation, value) = map.into_iter().next().unwrap();
+                                let value: PrismaValue = value.try_into()?;
+
+                                match operation.as_str() {
+                                    "set" => WriteExpression::Value(value),
+                                    "increment" => WriteExpression::Add(value),
+                                    "decrement" => WriteExpression::Substract(value),
+                                    "multiply" => WriteExpression::Multiply(value),
+                                    "divide" => WriteExpression::Divide(value),
+                                    _ => unreachable!("Invalid update operation"),
+                                }
+                            }
+                            _ => unreachable!(),
+                        };
+
+                        args.args.insert(sf, expr)
                     }
 
                     Field::Relation(ref rf) => match v {
-                        ParsedInputValue::Single(PrismaValue::Null(_)) => (),
+                        ParsedInputValue::Single(PrismaValue::Null) => (),
                         _ => args.nested.push((Arc::clone(rf), v.try_into()?)),
                     },
                 };

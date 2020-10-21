@@ -8,10 +8,8 @@ pub struct Field {
     pub name: Identifier,
     /// The aritiy of the field.
     pub arity: FieldArity,
-    /// The default value of the field.
-    pub default_value: Option<Expression>,
-    /// The directives of this field.
-    pub directives: Vec<Directive>,
+    /// The attributes of this field.
+    pub attributes: Vec<Attribute>,
     /// The comments for this field.
     pub documentation: Option<Comment>,
     /// The location of this field in the text representation.
@@ -32,9 +30,9 @@ impl WithSpan for Field {
     }
 }
 
-impl WithDirectives for Field {
-    fn directives(&self) -> &Vec<Directive> {
-        &self.directives
+impl WithAttributes for Field {
+    fn attributes(&self) -> &Vec<Attribute> {
+        &self.attributes
     }
 }
 

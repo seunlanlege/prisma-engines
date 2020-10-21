@@ -1,183 +1,143 @@
-use super::*;
+use super::{DmmfTypeReference, RenderContext, TypeKind};
+use query_core::{InputType, IntoArc, OutputType, ScalarType};
 
-#[derive(Debug)]
-pub enum DMMFTypeRenderer<'a> {
-    Input(&'a InputType),
-    Output(&'a OutputType),
-}
+// WIP dedup code
+pub(super) fn render_output_type(output_type: &OutputType, ctx: &mut RenderContext) -> DmmfTypeReference {
+    match output_type {
+        OutputType::Object(ref obj) => {
+            ctx.mark_to_be_rendered(obj);
+            let type_reference = DmmfTypeReference {
+                typ: obj.into_arc().name().to_string(),
+                kind: TypeKind::Object,
+                is_list: false,
+            };
 
-impl<'a> Renderer<'a, DMMFTypeInfo> for DMMFTypeRenderer<'a> {
-    fn render(&self, ctx: &RenderContext) -> DMMFTypeInfo {
-        match self {
-            DMMFTypeRenderer::Input(i) => self.render_input_type(i, ctx),
-            DMMFTypeRenderer::Output(o) => self.render_output_type(o, ctx),
+            type_reference
+        }
+        OutputType::Enum(et) => {
+            ctx.mark_to_be_rendered(&et.as_ref());
+            let type_reference = DmmfTypeReference {
+                typ: et.name().to_owned(),
+                kind: TypeKind::Enum,
+                is_list: false,
+            };
+
+            type_reference
+        }
+
+        OutputType::List(ref l) => {
+            let mut type_reference = render_output_type(l, ctx);
+            type_reference.is_list = true;
+
+            type_reference
+        }
+
+        OutputType::Scalar(ScalarType::Enum(et)) => {
+            ctx.mark_to_be_rendered(&et.as_ref());
+            let type_reference = DmmfTypeReference {
+                typ: et.name().to_owned(),
+                kind: TypeKind::Scalar,
+                is_list: false,
+            };
+
+            type_reference
+        }
+
+        OutputType::Scalar(ref scalar) => {
+            let stringified = match scalar {
+                ScalarType::Null => "Null",
+                ScalarType::String => "String",
+                ScalarType::Int => "Int",
+                ScalarType::Boolean => "Boolean",
+                ScalarType::Float => "Float",
+                ScalarType::DateTime => "DateTime",
+                ScalarType::Json => "Json",
+                ScalarType::UUID => "UUID",
+                ScalarType::JsonList => "Json",
+                ScalarType::Enum(_) => unreachable!(), // Handled separately above.
+            };
+
+            let type_reference = DmmfTypeReference {
+                typ: stringified.into(),
+                kind: TypeKind::Scalar,
+                is_list: false,
+            };
+
+            type_reference
         }
     }
 }
 
-impl<'a> DMMFTypeRenderer<'a> {
-    fn render_input_type(&self, i: &InputType, ctx: &RenderContext) -> DMMFTypeInfo {
-        match i {
-            InputType::Object(ref obj) => {
-                obj.into_renderer().render(ctx);
-                let type_info = DMMFTypeInfo {
-                    typ: obj.into_arc().name.clone(),
-                    kind: TypeKind::Object,
-                    is_required: true,
-                    is_list: false,
-                    is_nullable: false,
-                };
+pub(super) fn render_input_types(input_types: &[InputType], ctx: &mut RenderContext) -> Vec<DmmfTypeReference> {
+    input_types
+        .iter()
+        .map(|input_type| render_input_type(input_type, ctx))
+        .collect()
+}
 
-                type_info
-            }
+pub(super) fn render_input_type(input_type: &InputType, ctx: &mut RenderContext) -> DmmfTypeReference {
+    match input_type {
+        InputType::Object(ref obj) => {
+            ctx.mark_to_be_rendered(obj);
+            let type_reference = DmmfTypeReference {
+                typ: obj.into_arc().name.clone(),
+                kind: TypeKind::Object,
+                is_list: false,
+            };
 
-            InputType::Enum(et) => {
-                et.into_renderer().render(ctx);
-                let type_info = DMMFTypeInfo {
-                    typ: et.name().to_owned(),
-                    kind: TypeKind::Enum,
-                    is_required: true,
-                    is_list: false,
-                    is_nullable: false,
-                };
-
-                type_info
-            }
-
-            InputType::List(ref l) => {
-                let mut type_info = self.render_input_type(l, ctx);
-                type_info.is_list = true;
-
-                type_info
-            }
-
-            InputType::Opt(ref inner) => {
-                let mut type_info = self.render_input_type(inner, ctx);
-                type_info.is_required = false;
-
-                type_info
-            }
-
-            InputType::Null(ref inner) => {
-                let mut type_info = self.render_input_type(inner, ctx);
-                type_info.is_nullable = true;
-
-                type_info
-            }
-
-            InputType::Scalar(ScalarType::Enum(et)) => {
-                et.into_renderer().render(ctx);
-                let type_info = DMMFTypeInfo {
-                    typ: et.name().to_owned(),
-                    kind: TypeKind::Scalar,
-                    is_required: true,
-                    is_list: false,
-                    is_nullable: false,
-                };
-
-                type_info
-            }
-
-            InputType::Scalar(ref scalar) => {
-                let stringified = match scalar {
-                    ScalarType::String => "String",
-                    ScalarType::Int => "Int",
-                    ScalarType::Boolean => "Boolean",
-                    ScalarType::Float => "Float",
-                    ScalarType::DateTime => "DateTime",
-                    ScalarType::Json => "Json",
-                    ScalarType::UUID => "UUID",
-                    ScalarType::JsonList => "Json",
-                    ScalarType::Enum(_) => unreachable!(), // Handled separately above.
-                };
-
-                let type_info = DMMFTypeInfo {
-                    typ: stringified.into(),
-                    kind: TypeKind::Scalar,
-                    is_required: true,
-                    is_list: false,
-                    is_nullable: false,
-                };
-
-                type_info
-            }
+            type_reference
         }
-    }
 
-    // WIP dedup code
-    fn render_output_type(&self, o: &OutputType, ctx: &RenderContext) -> DMMFTypeInfo {
-        match o {
-            OutputType::Object(ref obj) => {
-                obj.into_renderer().render(ctx);
-                let type_info = DMMFTypeInfo {
-                    typ: obj.into_arc().name().to_string(),
-                    kind: TypeKind::Object,
-                    is_required: true,
-                    is_list: false,
-                    is_nullable: false,
-                };
+        InputType::Enum(et) => {
+            ctx.mark_to_be_rendered(&et.as_ref());
+            let type_reference = DmmfTypeReference {
+                typ: et.name().to_owned(),
+                kind: TypeKind::Enum,
+                is_list: false,
+            };
 
-                type_info
-            }
-            OutputType::Enum(et) => {
-                et.into_renderer().render(ctx);
-                let type_info = DMMFTypeInfo {
-                    typ: et.name().to_owned(),
-                    kind: TypeKind::Enum,
-                    is_required: true,
-                    is_list: false,
-                    is_nullable: false,
-                };
+            type_reference
+        }
 
-                type_info
-            }
-            OutputType::List(ref l) => {
-                let mut type_info = self.render_output_type(l, ctx);
-                type_info.is_list = true;
+        InputType::List(ref l) => {
+            let mut type_reference = render_input_type(l, ctx);
+            type_reference.is_list = true;
 
-                type_info
-            }
-            OutputType::Opt(ref opt) => {
-                let mut type_info = self.render_output_type(opt, ctx);
-                type_info.is_required = false;
+            type_reference
+        }
 
-                type_info
-            }
-            OutputType::Scalar(ScalarType::Enum(et)) => {
-                et.into_renderer().render(ctx);
-                let type_info = DMMFTypeInfo {
-                    typ: et.name().to_owned(),
-                    kind: TypeKind::Scalar,
-                    is_required: true,
-                    is_list: false,
-                    is_nullable: false,
-                };
+        InputType::Scalar(ScalarType::Enum(et)) => {
+            ctx.mark_to_be_rendered(&et.as_ref());
+            let type_reference = DmmfTypeReference {
+                typ: et.name().to_owned(),
+                kind: TypeKind::Scalar,
+                is_list: false,
+            };
 
-                type_info
-            }
-            OutputType::Scalar(ref scalar) => {
-                let stringified = match scalar {
-                    ScalarType::String => "String",
-                    ScalarType::Int => "Int",
-                    ScalarType::Boolean => "Boolean",
-                    ScalarType::Float => "Float",
-                    ScalarType::DateTime => "DateTime",
-                    ScalarType::Json => "Json",
-                    ScalarType::UUID => "UUID",
-                    ScalarType::JsonList => "Json",
-                    ScalarType::Enum(_) => unreachable!(), // Handled separately above.
-                };
+            type_reference
+        }
 
-                let type_info = DMMFTypeInfo {
-                    typ: stringified.into(),
-                    kind: TypeKind::Scalar,
-                    is_required: true,
-                    is_list: false,
-                    is_nullable: false,
-                };
+        InputType::Scalar(ref scalar) => {
+            let stringified = match scalar {
+                ScalarType::Null => "Null",
+                ScalarType::String => "String",
+                ScalarType::Int => "Int",
+                ScalarType::Boolean => "Boolean",
+                ScalarType::Float => "Float",
+                ScalarType::DateTime => "DateTime",
+                ScalarType::Json => "Json",
+                ScalarType::UUID => "UUID",
+                ScalarType::JsonList => "Json",
+                ScalarType::Enum(_) => unreachable!(), // Handled separately above.
+            };
 
-                type_info
-            }
+            let type_reference = DmmfTypeReference {
+                typ: stringified.into(),
+                kind: TypeKind::Scalar,
+                is_list: false,
+            };
+
+            type_reference
         }
     }
 }

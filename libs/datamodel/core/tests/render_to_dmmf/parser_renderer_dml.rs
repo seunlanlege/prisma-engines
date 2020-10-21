@@ -1,4 +1,5 @@
 extern crate datamodel;
+use self::datamodel::Datamodel;
 use crate::common::*;
 use pretty_assertions::assert_eq;
 
@@ -13,9 +14,9 @@ fn test_parser_renderer_via_dml() {
   posts     Post[]   @relation("author")
   profile   Profile?
 
-  @@map("user")
   @@unique([email, name])
   @@unique([name, email])
+  @@map("user")
 }
 
 model Profile {
@@ -77,7 +78,8 @@ enum CategoryEnum {
   A
   B
   C
-}"#;
+}
+"#;
 
     let dml = parse(input);
     let rendered = datamodel::render_datamodel_to_string(&dml).unwrap();
@@ -88,19 +90,119 @@ enum CategoryEnum {
 }
 
 #[test]
+fn test_parser_renderer_order_of_field_attributes_via_dml() {
+    let input = r#"model Post {
+  id        Int      @default(autoincrement()) @id
+  published Boolean  @map("_published") @default(false)
+  author    User?   @relation(fields: [authorId], references: [id])
+  authorId  Int?
+}
+
+model User {
+  id Int @id
+  megaField DateTime @map("mega_field") @default(now()) @unique @updatedAt
+  Post Post[]
+}
+
+model Test {
+  id     Int   @id @map("_id") @default(1)
+  blogId Int?  @unique @default(1)
+}
+"#;
+    let expected = r#"model Post {
+  id        Int     @id @default(autoincrement())
+  published Boolean @default(false) @map("_published")
+  author    User?   @relation(fields: [authorId], references: [id])
+  authorId  Int?
+}
+
+model User {
+  id        Int      @id
+  megaField DateTime @unique @default(now()) @updatedAt @map("mega_field")
+  Post      Post[]
+}
+
+model Test {
+  id     Int  @id @default(1) @map("_id")
+  blogId Int? @unique @default(1)
+}
+"#;
+
+    let dml = parse(input);
+    let rendered = datamodel::render_datamodel_to_string(&dml).unwrap();
+
+    print!("{}", rendered);
+
+    assert_eq!(expected, rendered);
+}
+
+#[test]
+fn test_parser_renderer_order_of_block_attributes_via_dml() {
+    let input = r#"model Person {
+  firstName   String
+  lastName    String
+  codeName    String
+  yearOfBirth Int
+  @@map("blog")
+  @@index([yearOfBirth])
+  @@unique([codeName, yearOfBirth])
+  @@id([firstName, lastName])
+}
+
+model Blog {
+  id   Int    @default(1)
+  name String
+  @@id([id])
+  @@index([id, name])
+  @@unique([name])
+  @@map("blog")
+}
+"#;
+    let expected = r#"model Person {
+  firstName   String
+  lastName    String
+  codeName    String
+  yearOfBirth Int
+
+  @@id([firstName, lastName])
+  @@unique([codeName, yearOfBirth])
+  @@index([yearOfBirth])
+  @@map("blog")
+}
+
+model Blog {
+  id   Int    @default(1)
+  name String
+
+  @@id([id])
+  @@unique([name])
+  @@index([id, name])
+  @@map("blog")
+}
+"#;
+
+    let dml = parse(input);
+    let rendered = datamodel::render_datamodel_to_string(&dml).unwrap();
+
+    print!("{}", rendered);
+
+    assert_eq!(expected, rendered);
+}
+
+#[test]
 fn test_parser_renderer_many_to_many_via_dml() {
     let input = r#"model Blog {
   id        Int      @id
   name      String
   viewCount Int
   posts     Post[]
-  authors   Author[] @relation("AuthorToBlogs", references: [id])
+  authors   Author[] @relation("AuthorToBlogs")
 }
 
 model Author {
   id      Int     @id
   name    String?
-  authors Blog[]  @relation("AuthorToBlogs", references: [id])
+  authors Blog[]  @relation("AuthorToBlogs")
 }
 
 model Post {
@@ -108,7 +210,8 @@ model Post {
   title  String
   blogId Int
   blog   Blog   @relation(fields: [blogId], references: [id])
-}"#;
+}
+"#;
 
     let dml = parse(input);
     let rendered = datamodel::render_datamodel_to_string(&dml).unwrap();
@@ -131,7 +234,8 @@ model User {
   name      String?
 
   @@map("user")
-}"#;
+}
+"#;
 
     let dml = parse(input);
     let rendered = datamodel::render_datamodel_to_string(&dml).unwrap();
@@ -139,4 +243,75 @@ model User {
     print!("{}", rendered);
 
     assert_eq!(rendered, input);
+}
+
+#[test]
+fn test_parser_renderer_native_types_via_dml() {
+    let input = r#"generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["nativeTypes"]
+}
+
+datasource pg {
+  provider = "postgresql"
+  url      = "postgresql://"
+}
+
+model Blog {
+  id     Int    @id
+  bigInt Int    @pg.BigInt
+  foobar String @pg.VarChar(12)
+}
+"#;
+
+    let dml = parse(input);
+
+    println!("{:?}", dml);
+
+    let config = parse_configuration(input);
+    let dml = parse(input);
+    let rendered = datamodel::render_datamodel_and_config_to_string(&dml, &config).unwrap();
+
+    assert_eq!(rendered, input);
+}
+
+#[test]
+fn preview_features_roundtrip() {
+    // we keep the support for `experimentalFeatures` for backwards compatibility reasons
+    let input_with_experimental = r#"generator client {
+  provider             = "prisma-client-js"
+  experimentalFeatures = ["connectOrCreate", "transactionApi"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = "postgresql://test"
+}
+"#;
+
+    let input_with_preview = r#"generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["connectOrCreate", "transactionApi"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = "postgresql://test"
+}
+"#;
+
+    // check that `experimentalFeatures` is turned into `previewFeatures`.
+    {
+        let config = parse_configuration(input_with_experimental);
+        let rendered = datamodel::render_datamodel_and_config_to_string(&Datamodel::new(), &config).unwrap();
+        assert_eq!(rendered, input_with_preview);
+    }
+
+    // check that `previewFeatures` stays as is.
+    {
+        let config = parse_configuration(input_with_preview);
+        let rendered = datamodel::render_datamodel_and_config_to_string(&Datamodel::new(), &config).unwrap();
+        println!("{}", rendered);
+        assert_eq!(rendered, input_with_preview);
+    }
 }

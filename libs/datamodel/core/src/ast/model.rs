@@ -7,14 +7,23 @@ pub struct Model {
     pub name: Identifier,
     /// The fields of the model.
     pub fields: Vec<Field>,
-    /// The directives of this model.
-    pub directives: Vec<Directive>,
+    /// The attributes of this model.
+    pub attributes: Vec<Attribute>,
     /// The documentation for this model.
     pub documentation: Option<Comment>,
     /// The location of this model in the text representation.
     pub span: Span,
     /// Should this be commented out.
     pub commented_out: bool,
+}
+
+impl Model {
+    pub fn find_field(&self, name: &str) -> &Field {
+        self.fields
+            .iter()
+            .find(|ast_field| ast_field.name.name == name)
+            .unwrap()
+    }
 }
 
 impl WithIdentifier for Model {
@@ -29,9 +38,9 @@ impl WithSpan for Model {
     }
 }
 
-impl WithDirectives for Model {
-    fn directives(&self) -> &Vec<Directive> {
-        &self.directives
+impl WithAttributes for Model {
+    fn attributes(&self) -> &Vec<Attribute> {
+        &self.attributes
     }
 }
 

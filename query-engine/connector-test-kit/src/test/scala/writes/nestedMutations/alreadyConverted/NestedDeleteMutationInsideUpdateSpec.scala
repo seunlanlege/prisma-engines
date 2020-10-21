@@ -37,7 +37,7 @@ class NestedDeleteMutationInsideUpdateSpec extends FlatSpec with Matchers with A
          |  updateParent(
          |  where: $parentIdentifier
          |  data:{
-         |    p: "p2", p_1: "p", p_2: "2",
+         |    p: { set: "p2" }, p_1: { set: "p" }, p_2: { set: "2" },
          |    childReq: {delete: true}
          |  }){
          |    childReq {
@@ -48,7 +48,8 @@ class NestedDeleteMutationInsideUpdateSpec extends FlatSpec with Matchers with A
       """,
         project,
         errorCode = 2009,
-        errorContains = "delete (field)\\n              ↳ Field does not exist on enclosing type."
+        errorContains =
+          "`Field does not exist on enclosing type.` at `Mutation.updateParent.data.ParentUpdateInput.childReq.ChildUpdateOneRequiredWithoutParentReqInput.delete`"
       )
     }
   }
@@ -83,7 +84,7 @@ class NestedDeleteMutationInsideUpdateSpec extends FlatSpec with Matchers with A
          |  updateParent(
          |  where: $parentIdentifier
          |  data:{
-         |    p: "p2"
+         |    p: { set: "p2" }
          |    childReq: {delete: true}
          |  }){
          |    childReq {
@@ -94,7 +95,8 @@ class NestedDeleteMutationInsideUpdateSpec extends FlatSpec with Matchers with A
       """,
         project,
         errorCode = 2009,
-        errorContains = "↳ delete (field)\\n              ↳ Field does not exist on enclosing type."
+        errorContains =
+          "`Field does not exist on enclosing type.` at `Mutation.updateParent.data.ParentUpdateInput.childReq.ChildUpdateOneRequiredWithoutParentOptInput.delete`"
       )
     }
   }
@@ -426,12 +428,13 @@ class NestedDeleteMutationInsideUpdateSpec extends FlatSpec with Matchers with A
       """,
         project,
         errorCode = 2009,
-        errorContains = """↳ delete (field)\n              ↳ Field does not exist on enclosing type."""
+        errorContains =
+          """`Field does not exist on enclosing type.` at `Mutation.updateParent.data.ParentUpdateInput.childReq.ChildUpdateOneRequiredWithoutParentsOptInput.delete`"""
       )
     }
   }
 
-  "a P1 to CM  relation " should "work" in {
+  "a P1 to CM  relation " should "work" taggedAs (IgnoreMsSql) in  {
     schemaWithRelation(onParent = ChildOpt, onChild = ParentList).test { t =>
       val project = SchemaDsl.fromStringV11() {
         t.datamodel
@@ -753,7 +756,7 @@ class NestedDeleteMutationInsideUpdateSpec extends FlatSpec with Matchers with A
         |model Parent{
         | id          String @id @default(cuid())
         | p           String @unique
-        | childrenOpt Child[] $relationInlineDirective
+        | childrenOpt Child[] $relationInlineAttribute
         |}
         |
         |model Child{
@@ -828,7 +831,7 @@ class NestedDeleteMutationInsideUpdateSpec extends FlatSpec with Matchers with A
         |model Parent{
         | id          String  @id @default(cuid())
         | p           String  @unique
-        | childrenOpt Child[] $relationInlineDirective
+        | childrenOpt Child[] $relationInlineAttribute
         |}
         |
         |model Child{
@@ -904,7 +907,7 @@ class NestedDeleteMutationInsideUpdateSpec extends FlatSpec with Matchers with A
       s"""
         |model Todo{
         | id        String    @id @default(cuid())
-        | comments  Comment[] $relationInlineDirective
+        | comments  Comment[] $relationInlineAttribute
         |}
         |
         |model Comment{
@@ -1008,7 +1011,7 @@ class NestedDeleteMutationInsideUpdateSpec extends FlatSpec with Matchers with A
       s"""
         |model Todo{
         | id       String    @id @default(cuid())
-        | comments Comment[] $relationInlineDirective
+        | comments Comment[] $relationInlineAttribute
         |}
         |
         |model Comment{
@@ -1073,7 +1076,7 @@ class NestedDeleteMutationInsideUpdateSpec extends FlatSpec with Matchers with A
       s"""
         |model Todo{
         | id       String    @id @default(cuid())
-        | comments Comment[] $relationInlineDirective
+        | comments Comment[] $relationInlineAttribute
         |}
         |
         |model Comment{
@@ -1330,8 +1333,7 @@ class NestedDeleteMutationInsideUpdateSpec extends FlatSpec with Matchers with A
       """,
       project,
       errorCode = 2016,
-      errorContains =
-        """"[Query Graph] Expected a valid parent ID to be present for a nested delete on a one-to-many relation."""
+      errorContains = """"[Query Graph] Expected a valid parent ID to be present for a nested delete on a one-to-many relation."""
     )
 
     val query = server.query("""{ todoes { title }}""", project)
@@ -1345,14 +1347,14 @@ class NestedDeleteMutationInsideUpdateSpec extends FlatSpec with Matchers with A
     val project = SchemaDsl.fromStringV11() { s"""model Top {
                                              |  id      String @id @default(cuid())
                                              |  nameTop String @unique
-                                             |  middles Middle[] $relationInlineDirective
+                                             |  middles Middle[] $relationInlineAttribute
                                              |}
                                              |
                                              |model Middle {
                                              |  id         String @id @default(cuid())
                                              |  nameMiddle String @unique
                                              |  tops       Top[]
-                                             |  bottoms    Bottom[] $relationInlineDirective
+                                             |  bottoms    Bottom[] $relationInlineAttribute
                                              |}
                                              |
                                              |model Bottom {
@@ -1390,25 +1392,29 @@ class NestedDeleteMutationInsideUpdateSpec extends FlatSpec with Matchers with A
     server.query(createMutation, project)
 
     val updateMutation =
-      s"""mutation b {
+      s"""
+         |mutation b {
          |  updateTop(
-         |    where: {nameTop: "the top"},
+         |    where: { nameTop: "the top" }
          |    data: {
-         |      nameTop: "updated top",
+         |      nameTop: { set: "updated top" }
          |      middles: {
-         |        update: [{
-         |              where: {nameMiddle: "the middle"},
-         |              data:{  nameMiddle: "updated middle"
-         |                      bottoms: {delete: [{nameBottom: "the bottom"}]
-         |              }
-         |       }}]
-         |     }
-         |   }
+         |        update: [
+         |          {
+         |            where: { nameMiddle: "the middle" }
+         |            data: {
+         |              nameMiddle: { set: "updated middle" }
+         |              bottoms: { delete: [{ nameBottom: "the bottom" }] }
+         |            }
+         |          }
+         |        ]
+         |      }
+         |    }
          |  ) {
          |    nameTop
-         |    middles (orderBy: id_ASC){
+         |    middles(orderBy: { id: asc }) {
          |      nameMiddle
-         |      bottoms (orderBy: id_ASC){
+         |      bottoms(orderBy: { id: asc }) {
          |        nameBottom
          |      }
          |    }
@@ -1426,13 +1432,13 @@ class NestedDeleteMutationInsideUpdateSpec extends FlatSpec with Matchers with A
     val project = SchemaDsl.fromStringV11() { s"""model Top {
                                              |  id      String   @id @default(cuid())
                                              |  nameTop String   @unique
-                                             |  middles Middle[] $relationInlineDirective
+                                             |  middles Middle[] $relationInlineAttribute
                                              |}
                                              |
                                              |model Middle {
                                              |  id         String   @id @default(cuid())
                                              |  nameMiddle String   @unique
-                                             |  bottoms    Bottom[] $relationInlineDirective
+                                             |  bottoms    Bottom[] $relationInlineAttribute
                                              |}
                                              |
                                              |model Bottom {
@@ -1469,23 +1475,27 @@ class NestedDeleteMutationInsideUpdateSpec extends FlatSpec with Matchers with A
     server.query(createMutation, project)
 
     val updateMutation =
-      s"""mutation b {
+      s"""
+         |mutation b {
          |  updateTop(
-         |    where: {nameTop: "the top"},
+         |    where: { nameTop: "the top" }
          |    data: {
-         |      nameTop: "updated top",
+         |      nameTop: { set: "updated top" }
          |      middles: {
-         |        update: [{
-         |              where: {nameMiddle: "the middle"},
-         |              data:{  nameMiddle: "updated middle"
-         |                      bottoms: {delete: [{nameBottom: "the bottom"}]
-         |              }
-         |       }}]
-         |     }
-         |   }
+         |        update: [
+         |          {
+         |            where: { nameMiddle: "the middle" }
+         |            data: {
+         |              nameMiddle: { set: "updated middle" }
+         |              bottoms: { delete: [{ nameBottom: "the bottom" }] }
+         |            }
+         |          }
+         |        ]
+         |      }
+         |    }
          |  ) {
          |    nameTop
-         |    middles (orderBy: id_ASC){
+         |    middles(orderBy: { id: asc }) {
          |      nameMiddle
          |      bottoms {
          |        nameBottom
@@ -1505,7 +1515,7 @@ class NestedDeleteMutationInsideUpdateSpec extends FlatSpec with Matchers with A
     val project = SchemaDsl.fromStringV11() { s"""model Top {
                                              |  id      String @id @default(cuid())
                                              |  nameTop String @unique
-                                             |  middles Middle[] $relationInlineDirective
+                                             |  middles Middle[] $relationInlineAttribute
                                              |}
                                              |
                                              |model Middle {
@@ -1546,24 +1556,27 @@ class NestedDeleteMutationInsideUpdateSpec extends FlatSpec with Matchers with A
     server.query(createMutation, project)
 
     val updateMutation =
-      s"""mutation b {
+      s"""
+         |mutation b {
          |  updateTop(
-         |    where: {nameTop: "the top"},
+         |    where: { nameTop: "the top" }
          |    data: {
-         |      nameTop: "updated top",
+         |      nameTop: { set: "updated top" }
          |      middles: {
-         |        update: [{
-         |          where: {nameMiddle: "the middle"},
-         |          data: {
-         |            nameMiddle: "updated middle"
-         |            bottom: {delete: true}
+         |        update: [
+         |          {
+         |            where: { nameMiddle: "the middle" }
+         |            data: {
+         |              nameMiddle: { set: "updated middle" }
+         |              bottom: { delete: true }
+         |            }
          |          }
-         |        }]
-         |     }
-         |   }
+         |        ]
+         |      }
+         |    }
          |  ) {
          |    nameTop
-         |    middles (orderBy: id_ASC) {
+         |    middles(orderBy: { id: asc }) {
          |      nameMiddle
          |      bottom {
          |        nameBottom
@@ -1595,7 +1608,7 @@ class NestedDeleteMutationInsideUpdateSpec extends FlatSpec with Matchers with A
                                              |model Bottom {
                                              |  id         String  @id @default(cuid())
                                              |  nameBottom String  @unique
-                                             |  below      Below[] $relationInlineDirective
+                                             |  below      Below[] $relationInlineAttribute
                                              |}
                                              |
                                              |model Below {
@@ -1626,35 +1639,33 @@ class NestedDeleteMutationInsideUpdateSpec extends FlatSpec with Matchers with A
     server.query(createMutation, project)
 
     val updateMutation =
-      s"""mutation b {
+      s"""
+         |mutation b {
          |  updateTop(
-         |    where: {nameTop: "the top"},
+         |    where: { nameTop: "the top" }
          |    data: {
-         |      nameTop: "updated top",
+         |      nameTop: { set: "updated top" }
          |      middle: {
          |        update: {
-         |               nameMiddle: "updated middle"
-         |               bottom: {
-         |                update: {
-         |                  nameBottom: "updated bottom"
-         |                  below: { delete: {nameBelow: "below"}
-         |
+         |          nameMiddle: { set: "updated middle" }
+         |          bottom: {
+         |            update: {
+         |              nameBottom: { set: "updated bottom" }
+         |              below: { delete: { nameBelow: "below" } }
+         |            }
          |          }
-         |                }
-         |          }
-         |       }
-         |     }
-         |   }
+         |        }
+         |      }
+         |    }
          |  ) {
          |    nameTop
          |    middle {
          |      nameMiddle
          |      bottom {
          |        nameBottom
-         |        below{
-         |           nameBelow
+         |        below {
+         |          nameBelow
          |        }
-         |
          |      }
          |    }
          |  }
@@ -1712,20 +1723,18 @@ class NestedDeleteMutationInsideUpdateSpec extends FlatSpec with Matchers with A
 
     val updateMutation =
       s"""
-         |mutation  {
+         |mutation {
          |  updateTop(
-         |    where: {
-         |      nameTop: "the top"
-         |    }
+         |    where: { nameTop: "the top" }
          |    data: {
-         |      nameTop: "updated top",
+         |      nameTop: { set: "updated top" }
          |      middle: {
          |        update: {
-         |              nameMiddle: "updated middle"
-         |              bottom: {delete: true}
+         |          nameMiddle: { set: "updated middle" }
+         |          bottom: { delete: true }
+         |        }
          |      }
-         |     }
-         |   }
+         |    }
          |  ) {
          |    nameTop
          |    middle {
@@ -1736,6 +1745,7 @@ class NestedDeleteMutationInsideUpdateSpec extends FlatSpec with Matchers with A
          |    }
          |  }
          |}
+         |
       """
 
     val result = server.query(updateMutation, project)
@@ -1786,20 +1796,18 @@ class NestedDeleteMutationInsideUpdateSpec extends FlatSpec with Matchers with A
 
     val updateMutation =
       s"""
-         |mutation  {
+         |mutation {
          |  updateTop(
-         |    where: {
-         |      nameTop: "the top"
-         |    }
+         |    where: { nameTop: "the top" }
          |    data: {
-         |      nameTop: "updated top",
+         |      nameTop: { set: "updated top" }
          |      middle: {
          |        update: {
-         |              nameMiddle: "updated middle"
-         |              bottom: {delete: true}
+         |          nameMiddle: { set: "updated middle" }
+         |          bottom: { delete: true }
+         |        }
          |      }
-         |     }
-         |   }
+         |    }
          |  ) {
          |    nameTop
          |    middle {
@@ -1831,19 +1839,17 @@ class NestedDeleteMutationInsideUpdateSpec extends FlatSpec with Matchers with A
     server.query("""mutation  {createUser(data: {name: "Z"}) {id}}""", project)
 
     val updateMutation =
-      s""" mutation {
-         |  updateUser(data:{
-         |    following: {
-         |      connect: [{ name: "Y" }, { name: "Z"}]
-         |    }
-         |  },where:{
-         |    name:"X"
-         |  }) {
+      s"""
+         |mutation {
+         |  updateUser(
+         |    data: { following: { connect: [{ name: "Y" }, { name: "Z" }] } }
+         |    where: { name: "X" }
+         |  ) {
          |    name
-         |    following{
+         |    following {
          |      name
          |    }
-         |    follower{
+         |    follower {
          |      name
          |    }
          |  }
@@ -1860,20 +1866,19 @@ class NestedDeleteMutationInsideUpdateSpec extends FlatSpec with Matchers with A
       """{"data":{"users":[{"name":"X","following":[{"name":"Y"},{"name":"Z"}]},{"name":"Y","following":[]},{"name":"Z","following":[]}]}}""")
 
     val deleteMutation =
-      s""" mutation {
-         |  updateUser(data:{
-         |    follower: {
-         |      delete: [{ name: "X" }]
-         |    }
-         |  },where:{
-         |    name:"Y"
-         |  }) {
+      s"""
+         |mutation {
+         |  updateUser(
+         |    data: { follower: { delete: [{ name: "X" }] } }
+         |    where: { name: "Y" }
+         |  ) {
          |    name
-         |    following{
+         |    following {
          |      name
          |    }
          |  }
          |}
+         |
       """
 
     val result2 = server.query(deleteMutation, project)

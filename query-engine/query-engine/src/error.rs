@@ -1,53 +1,53 @@
 use connector::error::ConnectorError;
-use datamodel::error::ErrorCollection;
-use failure::{Error, Fail};
+use datamodel::diagnostics::Diagnostics;
 use feature_flags::FeatureFlagError;
 use graphql_parser::query::ParseError as GqlParseError;
 use query_core::CoreError;
-use serde_json;
 
-#[derive(Debug, Fail)]
+use thiserror::Error;
+
+#[derive(Debug, Error)]
 pub enum PrismaError {
-    #[fail(display = "{}", _0)]
+    #[error("{}", _0)]
     SerializationError(String),
 
-    #[fail(display = "{}", _0)]
+    #[error("{}", _0)]
     CoreError(CoreError),
 
-    #[fail(display = "{}", _0)]
-    JsonDecodeError(Error),
+    #[error("{}", _0)]
+    JsonDecodeError(anyhow::Error),
 
-    #[fail(display = "{}", _0)]
+    #[error("{}", _0)]
     ConfigurationError(String),
 
-    #[fail(display = "{}", _0)]
+    #[error("{}", _0)]
     ConnectorError(ConnectorError),
 
-    #[fail(display = "{}", _0)]
-    ConversionError(ErrorCollection, String),
+    #[error("{}", _0)]
+    ConversionError(Diagnostics, String),
 
-    #[fail(display = "{}", _0)]
-    IOError(Error),
+    #[error("{}", _0)]
+    IOError(anyhow::Error),
 
-    #[fail(display = "{}", _0)]
+    #[error("{}", _0)]
     InvocationError(String),
 
     /// (Feature name, additional error text)
-    #[fail(display = "Unsupported feature: {}. {}", _0, _1)]
+    #[error("Unsupported feature: {}. {}", _0, _1)]
     UnsupportedFeatureError(&'static str, String),
 
-    #[fail(display = "Error in data model: {}", _0)]
-    DatamodelError(ErrorCollection),
+    #[error("Error in data model: {}", _0)]
+    DatamodelError(Diagnostics),
 
-    #[fail(display = "{}", _0)]
+    #[error("{}", _0)]
     QueryConversionError(String),
 
-    #[fail(display = "{}", _0)]
+    #[error("{}", _0)]
     FeatureError(String),
 }
 
 impl PrismaError {
-    pub fn render_as_json(self) -> Result<(), failure::Error> {
+    pub fn render_as_json(self) -> Result<(), anyhow::Error> {
         use std::fmt::Write as _;
         use std::io::Write as _;
 
@@ -58,12 +58,11 @@ impl PrismaError {
             }) => err.into(),
             PrismaError::ConversionError(errors, dml_string) => {
                 let mut full_error = errors.to_pretty_string("schema.prisma", &dml_string);
-                write!(full_error, "\nValidation Error Count: {}", errors.to_iter().len())?;
+                write!(full_error, "\nValidation Error Count: {}", errors.errors.len())?;
 
-                user_facing_errors::Error::from(
-                    user_facing_errors::KnownError::new(user_facing_errors::common::SchemaParserError { full_error })
-                        .unwrap(),
-                )
+                user_facing_errors::Error::from(user_facing_errors::KnownError::new(
+                    user_facing_errors::common::SchemaParserError { full_error },
+                ))
             }
             other => user_facing_errors::Error::new_non_panic_with_current_backtrace(other.to_string()),
         };
@@ -86,8 +85,8 @@ impl From<CoreError> for PrismaError {
     }
 }
 
-impl From<ErrorCollection> for PrismaError {
-    fn from(e: ErrorCollection) -> Self {
+impl From<Diagnostics> for PrismaError {
+    fn from(e: Diagnostics) -> Self {
         PrismaError::DatamodelError(e)
     }
 }

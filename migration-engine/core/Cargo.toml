@@ -5,25 +5,22 @@ authors = ["Marcus Böhm <boehm@prisma.io>", "Julius de Bruijn <bruijn@prisma.i
 edition = "2018"
 
 [dependencies]
-migration-connector = { path = "../connectors/migration-connector" }
 datamodel = { path = "../../libs/datamodel/core" }
+migration-connector = { path = "../connectors/migration-connector" }
 sql-migration-connector = { path = "../connectors/sql-migration-connector", optional = true }
 user-facing-errors = { path = "../../libs/user-facing-errors" }
 
 anyhow = "1.0.26"
 async-trait = "0.1.17"
 chrono = { version = "0.4", features = ["serde"] }
-futures = { version = "0.3", features = ["compat"] }
+futures = { version = "0.3", default-features = false, features = ["compat"] }
 jsonrpc-core = "14.0"
-quaint = { git = "https://github.com/prisma/quaint", optional = true }
-serde = { version = "1.0" }
+serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-thiserror = "1.0.9"
 tracing = "0.1.10"
 tracing-futures = "0.2.0"
-tracing-error = "0.1.2"
-url = "2"
+url = "2.1.1"
 
 [features]
 default = ["sql"]
-sql = ["quaint", "sql-migration-connector"]
+sql = ["sql-migration-connector"]

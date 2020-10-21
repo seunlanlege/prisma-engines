@@ -6,6 +6,7 @@ use error::CliError;
 use futures::FutureExt;
 use migration_core::migration_api;
 use structopt::StructOpt;
+use user_facing_errors::{common::InvalidDatabaseString, KnownError};
 
 #[derive(Debug, StructOpt)]
 pub(crate) struct Cli {
@@ -17,7 +18,7 @@ pub(crate) struct Cli {
 }
 
 impl Cli {
-    pub(crate) async fn run(&self) -> ! {
+    pub(crate) async fn run(self) -> ! {
         match std::panic::AssertUnwindSafe(self.run_inner()).catch_unwind().await {
             Ok(Ok(msg)) => {
                 tracing::info!("{}", msg);
@@ -43,10 +44,15 @@ impl Cli {
         }
     }
 
-    pub(crate) async fn run_inner(&self) -> Result<String, CliError> {
+    pub(crate) async fn run_inner(self) -> Result<String, CliError> {
         match self.command {
             CliCommand::CreateDatabase => create_database(&self.datasource).await,
             CliCommand::CanConnectToDatabase => connect_to_database(&self.datasource).await,
+            CliCommand::DropDatabase => drop_database(&self.datasource).await,
+            CliCommand::QeSetup => {
+                qe_setup(&self.datasource).await?;
+                Ok(String::new())
+            }
         }
     }
 }
@@ -57,6 +63,10 @@ enum CliCommand {
     CreateDatabase,
     /// Does the database connection string work?
     CanConnectToDatabase,
+    /// Drop the database.
+    DropDatabase,
+    /// Set up the database for connector-test-kit.
+    QeSetup,
 }
 
 async fn connect_to_database(database_str: &str) -> Result<String, CliError> {
@@ -68,7 +78,21 @@ async fn connect_to_database(database_str: &str) -> Result<String, CliError> {
 async fn create_database(database_str: &str) -> Result<String, CliError> {
     let datamodel = datasource_from_database_str(database_str)?;
     let db_name = migration_core::create_database(&datamodel).await?;
+
     Ok(format!("Database '{}' was successfully created.", db_name))
+}
+
+async fn drop_database(database_str: &str) -> Result<String, CliError> {
+    let datamodel = datasource_from_database_str(database_str)?;
+    migration_core::drop_database(&datamodel).await?;
+
+    Ok(format!("The database was successfully dropped."))
+}
+
+async fn qe_setup(prisma_schema: &str) -> Result<(), CliError> {
+    migration_core::qe_setup(&prisma_schema).await?;
+
+    Ok(())
 }
 
 fn datasource_from_database_str(database_str: &str) -> Result<String, CliError> {
@@ -77,10 +101,10 @@ fn datasource_from_database_str(database_str: &str) -> Result<String, CliError> 
         Some("file") => "sqlite",
         Some(other) => other,
         None => {
-            return Err(CliError::Other(anyhow::anyhow!(
-                "Invalid database string format: {}",
-                database_str
-            )))
+            return Err(CliError::Known {
+                error: KnownError::new(InvalidDatabaseString { details: String::new() }),
+                exit_code: 255,
+            })
         }
     };
 

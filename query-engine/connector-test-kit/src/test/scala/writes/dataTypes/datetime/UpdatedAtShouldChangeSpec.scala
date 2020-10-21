@@ -49,7 +49,7 @@ class UpdatedAtShouldChangeSpec extends FlatSpec with Matchers with ApiSpecBase 
           s"""mutation b {
          |  updateTop(
          |    where: { top: "top1" }
-         |    data: { top: "top10" }
+         |    data: { top: { set: "top10" }}
          |  ) {
          |    updatedAt
          |  }
@@ -72,7 +72,7 @@ class UpdatedAtShouldChangeSpec extends FlatSpec with Matchers with ApiSpecBase 
           s"""mutation b {
            |  upsertTop(
            |    where: { top: "top3" }
-           |    update: { top: "top30" }
+           |    update: { top: { set: "top30" }}
            |    create: { top: "Should not matter" }
            |  ) {
            |    updatedAt
@@ -95,8 +95,8 @@ class UpdatedAtShouldChangeSpec extends FlatSpec with Matchers with ApiSpecBase 
         .query(
           s"""mutation b {
            |  updateManyTops(
-           |    where: { top: "top5" }
-           |    data: { top: "top50" }
+           |    where: { top: { equals: "top5" }}
+           |    data: { top: { set: "top50" }}
            |  ) {
            |    count
            |  }

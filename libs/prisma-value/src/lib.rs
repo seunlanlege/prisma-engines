@@ -1,3 +1,4 @@
+pub mod arithmetic;
 mod error;
 #[cfg(feature = "sql-ext")]
 pub mod sql_ext;
@@ -16,22 +17,6 @@ use rust_decimal::prelude::FromPrimitive;
 #[cfg(feature = "sql-ext")]
 pub use sql_ext::*;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
-pub enum TypeHint {
-    String,
-    Float,
-    Boolean,
-    Enum,
-    Json,
-    DateTime,
-    UUID,
-    Int,
-    Array,
-    Char,
-    Bytes,
-    Unknown,
-}
-
 #[derive(Debug, PartialEq, Clone, Eq, Hash, Serialize, Deserialize, PartialOrd, Ord)]
 #[serde(untagged)]
 pub enum PrismaValue {
@@ -41,7 +26,8 @@ pub enum PrismaValue {
     Int(i64),
 
     #[serde(serialize_with = "serialize_null")]
-    Null(TypeHint),
+    Null,
+
     Uuid(Uuid),
     List(PrismaListValue),
     Json(String),
@@ -62,14 +48,12 @@ impl TryFrom<serde_json::Value> for PrismaValue {
 
     fn try_from(v: serde_json::Value) -> PrismaValueResult<Self> {
         match v {
-            serde_json::Value::String(s) => Ok(serde_json::from_str(&s)
-                .map(|val| PrismaValue::Json(val))
-                .unwrap_or(PrismaValue::String(s))),
+            serde_json::Value::String(s) => Ok(PrismaValue::String(s)),
             serde_json::Value::Array(v) => {
                 let vals: PrismaValueResult<Vec<PrismaValue>> = v.into_iter().map(PrismaValue::try_from).collect();
                 Ok(PrismaValue::List(vals?))
             }
-            serde_json::Value::Null => Ok(PrismaValue::Null(TypeHint::Unknown)),
+            serde_json::Value::Null => Ok(PrismaValue::Null),
             serde_json::Value::Bool(b) => Ok(PrismaValue::Boolean(b)),
             serde_json::Value::Number(num) => {
                 if num.is_i64() {
@@ -104,10 +88,10 @@ fn serialize_date<S>(date: &DateTime<Utc>, serializer: S) -> Result<S::Ok, S::Er
 where
     S: Serializer,
 {
-    format!("{}", stringify_date(date)).serialize(serializer)
+    stringify_date(date).serialize(serializer)
 }
 
-fn serialize_null<S>(_: &TypeHint, serializer: S) -> Result<S::Ok, S::Error>
+fn serialize_null<S>(serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {
@@ -118,22 +102,12 @@ fn serialize_decimal<S>(decimal: &Decimal, serializer: S) -> Result<S::Ok, S::Er
 where
     S: Serializer,
 {
-    decimal.to_f64().expect("Decimal is not a f64.").serialize(serializer)
+    decimal.to_string().parse::<f64>().unwrap().serialize(serializer)
 }
 
 impl PrismaValue {
-    pub fn null<I>(hint: I) -> Self
-    where
-        I: Into<TypeHint>,
-    {
-        Self::Null(hint.into())
-    }
-
     pub fn is_null(&self) -> bool {
-        match self {
-            PrismaValue::Null(_) => true,
-            _ => false,
-        }
+        matches!(self, PrismaValue::Null)
     }
 
     pub fn into_string(self) -> Option<String> {
@@ -168,7 +142,7 @@ impl fmt::Display for PrismaValue {
             PrismaValue::DateTime(x) => x.fmt(f),
             PrismaValue::Enum(x) => x.fmt(f),
             PrismaValue::Int(x) => x.fmt(f),
-            PrismaValue::Null(_) => "null".fmt(f),
+            PrismaValue::Null => "null".fmt(f),
             PrismaValue::Uuid(x) => x.fmt(f),
             PrismaValue::Json(x) => x.fmt(f),
             PrismaValue::List(x) => {
@@ -198,8 +172,8 @@ impl TryFrom<f64> for PrismaValue {
         // Decimal::from_f64 is buggy. Issue: https://github.com/paupino/rust-decimal/issues/228
         Decimal::from_str(&f.to_string())
             .ok()
-            .map(|d| PrismaValue::Float(d))
-            .ok_or(ConversionFailure::new("f64", "Decimal"))
+            .map(PrismaValue::Float)
+            .ok_or_else(|| ConversionFailure::new("f64", "Decimal"))
     }
 }
 

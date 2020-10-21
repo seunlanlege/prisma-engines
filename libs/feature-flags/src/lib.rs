@@ -1,58 +1,68 @@
+#![allow(non_snake_case)]
 //! How to implement a feature flag for Prisma:
-//! - Add a bool field to the `FeatureFlags` struct.
-//! - Add the str equivalent of the flag to the `add_flag` function match.
-//! - Add the str equivalent of the flag to the `enable_all()` function.
+//! - Add the desired identifier to the `flags!` macro invocation
+//!
+//! Note: the stringified version of that ident will be used as the string flag name.
 //!
 //! How to use a feature flag:
 //! - Make sure that the flags are initialized in the app stack with `feature_flags::initialize(_)`.
 //! - Use the flag in crates that have a dependency on the feature flags crate with: `feature_flags::get().<bool_flag_name>`.
 
-use failure::Fail;
 use once_cell::sync::OnceCell;
+use thiserror::Error;
 
 static FEATURE_FLAGS: OnceCell<FeatureFlags> = OnceCell::new();
 
-#[derive(Debug, Fail)]
+#[derive(Debug, Error)]
 pub enum FeatureFlagError {
-    #[fail(display = "Invalid feature flag: {}", _0)]
+    #[error("Invalid feature flag: {0}")]
     InvalidFlag(String),
 }
 
 pub type Result<T> = std::result::Result<T, FeatureFlagError>;
 
-#[derive(Debug, Default)]
-pub struct FeatureFlags {
-    /// Transactional batches support in the QE.
-    pub transaction: bool,
+macro_rules! flags {
+    ($( $field:ident ),*) => {
+        #[derive(Debug, Default)]
+        pub struct FeatureFlags {
+            $(
+                pub $field: bool,
+            )*
+        }
 
-    /// `connectOrCreate` nested query in the QE.
-    pub connect_or_create: bool,
+        impl FeatureFlags {
+            fn add_flag(&mut self, flag: &str) -> Result<()> {
+                match flag {
+                    "all" => self.enable_all(),
+                    $(
+                        stringify!($field) => self.$field = true,
+                    )*
+                    _ => return Err(FeatureFlagError::InvalidFlag(flag.to_owned())),
+                };
+
+                Ok(())
+            }
+
+            fn enable_all(&mut self) {
+                $(
+                    self.$field = true;
+                )*
+            }
+        }
+    };
 }
 
-impl FeatureFlags {
-    fn add_flag(&mut self, flag: &str) -> Result<()> {
-        match flag {
-            "all" => self.enable_all(),
-            "transaction" => self.transaction = true,
-            "connectOrCreate" => self.connect_or_create = true,
-            _ => Err(FeatureFlagError::InvalidFlag(flag.to_owned()))?,
-        };
-
-        Ok(())
-    }
-
-    fn enable_all(&mut self) {
-        self.transaction = true;
-        self.connect_or_create = true;
-    }
-}
+// `transaction`: Transactional batches support in the QE.
+// `connectOrCreate`: `connectOrCreate` nested query in the QE.
+// `microsoftSqlServer`: Support for Microsoft SQL Server databases
+flags!(transaction, connectOrCreate, microsoftSqlServer);
 
 /// Initializes the feature flags with given flags.
 /// Noop if already initialized.
 pub fn initialize(from: &[String]) -> Result<()> {
     FEATURE_FLAGS
         .get_or_try_init(|| {
-            from.into_iter().try_fold(FeatureFlags::default(), |mut acc, flag| {
+            from.iter().try_fold(FeatureFlags::default(), |mut acc, flag| {
                 acc.add_flag(&flag)?;
                 Ok(acc)
             })
